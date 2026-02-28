@@ -1,2 +1,0 @@
-"""Content generation module."""
-

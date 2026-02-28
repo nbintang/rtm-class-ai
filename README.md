@@ -1,51 +1,120 @@
-# RTM Class AI
+# rtm-class-ai
 
-Backend template for an AI-powered class platform:
-- User/auth flows
-- Material ingestion and processing
-- AI generation (summary, quiz, LKPD, remedial)
-- Quiz creation and scoring
-- RAG building blocks
+Standalone Python 3.11 AI microservice for LangChain + RAG + prompt-based generation. This service is designed to be called by a separate NestJS backend.
 
-## Structure
-
-The project follows this module layout:
-- `src/main.py` - FastAPI app bootstrap
-- `src/config.py` - environment config
-- `src/core/` - logging/security/exceptions/constants
-- `src/db/` - SQLAlchemy base/session/models
-- `src/modules/` - domain routes/schemas/services
-- `src/ai/` - provider gateway, RAG, prompts, generators, validators
-- `src/storage/` - local + S3 storage adapters
-- `src/jobs/` - async queue/task stubs
-- `src/utils/` - shared utility helpers
-- `tests/` - starter tests
-
-## Quick Start
-
-1. Install dependencies:
+## Install
 
 ```bash
-pip install -e ".[dev]"
-```
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# Linux/macOS
+source .venv/bin/activate
 
-2. Copy environment file:
-
-```bash
+pip install -e .
 cp .env.example .env
 ```
 
-3. Run API:
+## Run
 
 ```bash
-uvicorn src.main:app --reload
+uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-4. Open docs:
-- `http://127.0.0.1:8000/api/v1/docs`
+## Endpoints
 
-## Notes
+- `GET /health`
+- `POST /rag/index`
+- `POST /generate/quiz`
+- `POST /generate/summary`
+- `POST /generate/lkpd`
+- `POST /generate/remedial`
 
-- The current service layer uses in-memory stores for quick scaffolding.
-- DB models and SQLAlchemy setup are prepared for migration to persistent repositories.
-- AI gateway falls back to an echo provider when `OPENAI_API_KEY` is not configured.
+## Example curl
+
+### Health
+
+```bash
+curl -X GET http://localhost:8000/health
+```
+
+### RAG Index
+
+```bash
+curl -X POST http://localhost:8000/rag/index \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_name": "biology",
+    "text": "Fotosintesis adalah proses tumbuhan membuat makanan..."
+  }'
+```
+
+### Generate Quiz
+
+```bash
+curl -X POST http://localhost:8000/generate/quiz \
+  -H "Content-Type: application/json" \
+  -d '{
+    "topic": "Fotosintesis",
+    "grade_level": "SMP",
+    "num_questions": 5,
+    "collection_name": "biology",
+    "use_rag": true
+  }'
+```
+
+### Generate Summary
+
+```bash
+curl -X POST http://localhost:8000/generate/summary \
+  -H "Content-Type: application/json" \
+  -d '{
+    "topic": "Fotosintesis",
+    "max_words": 150,
+    "collection_name": "biology",
+    "use_rag": true
+  }'
+```
+
+### Generate LKPD
+
+```bash
+curl -X POST http://localhost:8000/generate/lkpd \
+  -H "Content-Type: application/json" \
+  -d '{
+    "topic": "Fotosintesis",
+    "learning_objective": "Siswa memahami faktor yang mempengaruhi fotosintesis",
+    "activity_count": 3,
+    "collection_name": "biology",
+    "use_rag": true
+  }'
+```
+
+### Generate Remedial
+
+```bash
+curl -X POST http://localhost:8000/generate/remedial \
+  -H "Content-Type: application/json" \
+  -d '{
+    "topic": "Fotosintesis",
+    "weaknesses": ["Belum memahami reaksi terang", "Sulit membedakan kloroplas"],
+    "session_count": 3,
+    "collection_name": "biology",
+    "use_rag": true
+  }'
+```
+
+## NestJS Integration
+
+Set the AI base URL in NestJS to:
+
+- `http://localhost:8000`
+
+Then call these paths directly:
+
+- `/health`
+- `/rag/index`
+- `/generate/quiz`
+- `/generate/summary`
+- `/generate/lkpd`
+- `/generate/remedial`

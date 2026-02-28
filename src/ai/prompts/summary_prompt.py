@@ -1,7 +1,16 @@
-def build_summary_prompt(source_text: str) -> str:
-    return (
-        "Summarize the source text for high school students. "
-        "Highlight key concepts and practical examples.\n\n"
-        f"Source Text:\n{source_text}"
-    )
+SUMMARY_PROMPT = """
+Generate a concise learning summary.
 
+Topic: {topic}
+Max words: {max_words}
+
+Context:
+{context}
+
+Output rules:
+- Return ONLY valid JSON.
+- Keep it concise and student-friendly.
+- key_points should be practical and specific.
+
+{format_instructions}
+"""

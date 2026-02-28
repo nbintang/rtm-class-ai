@@ -1,4 +1,3 @@
-DEFAULT_USER_ROLE = "student"
-AVAILABLE_USER_ROLES = {"student", "teacher", "admin"}
-SUPPORTED_MATERIAL_EXTENSIONS = {".pdf", ".ppt", ".pptx", ".txt", ".md"}
-
+APP_NAME = "rtm-class-ai"
+APP_VERSION = "0.1.0"
+DEFAULT_COLLECTION = "default"

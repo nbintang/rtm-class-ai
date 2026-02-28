@@ -1,38 +1,11 @@
-# Python
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-.python-version
-
-# Virtual environment
-.venv/
-venv/
-env/
-
-# Local env/config
-.env
-.env.*
-!.env.example
-
-# Test/cache
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# Coverage
-.coverage
-htmlcov/
-
-# Build artifacts
-build/
-dist/
+*.so
 *.egg-info/
-
-# IDE
-.idea/
-.vscode/
-
-# Runtime data
-data/
-*.db
+.venv/
+.env
+.chroma/
+.pytest_cache/
+.ruff_cache/

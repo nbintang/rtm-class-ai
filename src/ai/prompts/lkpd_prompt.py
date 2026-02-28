@@ -1,7 +1,16 @@
-def build_lkpd_prompt(source_text: str) -> str:
-    return (
-        "Create an LKPD (Lembar Kerja Peserta Didik) from the source text. "
-        "Include goals, instructions, and student exercises.\n\n"
-        f"Source Text:\n{source_text}"
-    )
+LKPD_PROMPT = """
+Generate LKPD (worksheet) content.
 
+Topic: {topic}
+Learning objective: {learning_objective}
+Activity count: {activity_count}
+
+Context:
+{context}
+
+Output rules:
+- Return ONLY valid JSON.
+- Activities should be actionable and measurable.
+
+{format_instructions}
+"""

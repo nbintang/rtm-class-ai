@@ -1,2 +1,0 @@
-"""Quizzes module."""
-

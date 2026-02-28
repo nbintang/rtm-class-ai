@@ -1,18 +1,19 @@
-from fastapi import Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 
-class AppError(Exception):
-    def __init__(self, message: str, status_code: int = 400, code: str = "app_error") -> None:
+class ServiceError(Exception):
+    def __init__(self, message: str, status_code: int = 400) -> None:
         self.message = message
         self.status_code = status_code
-        self.code = code
         super().__init__(message)
 
 
-async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"error": exc.code, "message": exc.message},
-    )
+def register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ServiceError)
+    async def handle_service_error(_: Request, exc: ServiceError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
 
+    @app.exception_handler(HTTPException)
+    async def handle_http_exception(_: Request, exc: HTTPException) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
