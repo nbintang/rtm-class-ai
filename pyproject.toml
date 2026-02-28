@@ -1,18 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "rtm-class-ai"
 version = "0.1.0"
 description = "AI-powered class material transformer"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.10"
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "sqlalchemy>=2.0",
-    "psycopg2-binary",
-    "alembic",
-    "openai",
-    "pypdf",
-    "python-pptx",
-    "pgvector",
-    "python-dotenv"
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
+    "openai>=1.50.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.8.0",
+    "pypdf>=5.0.0",
+    "python-pptx>=1.0.0",
+    "pgvector>=0.3.0",
+    "boto3>=1.35.0",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "httpx>=0.27.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
