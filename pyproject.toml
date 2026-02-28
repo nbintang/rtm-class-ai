@@ -1,0 +1,18 @@
+[project]
+name = "rtm-class-ai"
+version = "0.1.0"
+description = "AI-powered class material transformer"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary",
+    "alembic",
+    "openai",
+    "pypdf",
+    "python-pptx",
+    "pgvector",
+    "python-dotenv"
+]
