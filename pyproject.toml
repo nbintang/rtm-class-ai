@@ -1,7 +1,7 @@
 [project]
 name = "rtm-class-ai"
 version = "0.1.0"
-description = "Standalone AI microservice with FastAPI, LangChain, and Chroma RAG"
+description = "Standalone webhook AI agent microservice with FastAPI, LangChain, Groq, MCP, and memory"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -9,16 +9,31 @@ dependencies = [
   "uvicorn[standard]",
   "pydantic>=2",
   "python-dotenv",
-  "langchain",
-  "langchain-openai",
-  "langchain-community",
-  "chromadb",
-  "openai",
+  "python-multipart",
   "httpx",
+  "redis>=5",
+  "langchain",
+  "langgraph",
+  "langchain-groq",
+  "langchain-mcp-adapters",
+  "chromadb",
+  "langchain-chroma>=1.1.0",
   "pypdf",
-  "python-pptx"
+  "python-pptx",
+  "reportlab",
+  "taskipy>=1.14.1",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.taskipy.tasks]
+up = "docker compose up --build"
+upd = "docker compose up -d --build"
+down = "docker compose down"
+logs = "docker compose logs -f"
+ps = "docker compose ps"
