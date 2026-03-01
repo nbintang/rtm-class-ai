@@ -19,6 +19,26 @@ def _parse_int_tuple(raw: str, default: Iterable[int]) -> tuple[int, ...]:
     return tuple(values)
 
 
+def _parse_hex_color(raw: str, default: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return default
+
+    if not value.startswith("#"):
+        value = f"#{value}"
+
+    hex_part = value[1:]
+    if len(hex_part) not in (3, 6):
+        return default
+
+    try:
+        int(hex_part, 16)
+    except ValueError:
+        return default
+
+    return value.upper()
+
+
 class Settings(BaseModel):
     chroma_persist_dir: str = ".chroma"
     groq_api_key: str = ""
@@ -50,6 +70,11 @@ class Settings(BaseModel):
     lkpd_job_queue_key: str = "lkpd_jobs:queue"
     lkpd_pdf_dir: str = ".generated/lkpd"
     lkpd_pdf_ttl_seconds: int = 86400
+    lkpd_header_logo_path: str = ".assets/lkpd/logo.png"
+    lkpd_header_accent_hex: str = "#1F4E79"
+    lkpd_header_title_line1: str = "LEMBAR KERJA PESERTA DIDIK (LKPD)"
+    lkpd_header_title_line2: str = "SMARTER AI"
+    lkpd_header_title_line3: str = ""
     app_public_base_url: str = "http://localhost:8000"
 
 
@@ -93,6 +118,20 @@ def get_settings() -> Settings:
         lkpd_job_queue_key=os.getenv("LKPD_JOB_QUEUE_KEY", "lkpd_jobs:queue"),
         lkpd_pdf_dir=os.getenv("LKPD_PDF_DIR", ".generated/lkpd"),
         lkpd_pdf_ttl_seconds=int(os.getenv("LKPD_PDF_TTL_SECONDS", "86400")),
+        lkpd_header_logo_path=os.getenv("LKPD_HEADER_LOGO_PATH", ".assets/lkpd/logo.png"),
+        lkpd_header_accent_hex=_parse_hex_color(
+            os.getenv("LKPD_HEADER_ACCENT_HEX", "#1F4E79"),
+            default="#1F4E79",
+        ),
+        lkpd_header_title_line1=os.getenv(
+            "LKPD_HEADER_TITLE_LINE1",
+            "LEMBAR KERJA PESERTA DIDIK (LKPD)",
+        ),
+        lkpd_header_title_line2=os.getenv(
+            "LKPD_HEADER_TITLE_LINE2",
+            "SMARTER AI",
+        ),
+        lkpd_header_title_line3=os.getenv("LKPD_HEADER_TITLE_LINE3", ""),
         app_public_base_url=os.getenv("APP_PUBLIC_BASE_URL", "http://localhost:8000"),
     )
 

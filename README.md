@@ -10,6 +10,8 @@ Standalone Python 3.11 AI microservice untuk generate materi dan LKPD via upload
 - Hasil akhir dikirim ke `callback_url` (HTTP POST JSON)
 - Jika callback gagal, retry `3` kali dengan backoff default `5,15,45` detik
 - Khusus LKPD: server juga generate PDF, disimpan lokal 24 jam, dan callback mengirim `pdf_url`
+  - PDF LKPD memakai template visual dengan header formal di semua halaman
+  - Logo header bersifat opsional (jika file logo tidak ada, PDF tetap digenerate)
 
 ## Install
 
@@ -252,6 +254,23 @@ curl -X POST http://localhost:8000/api/lkpd \
 curl -L "http://localhost:8000/api/lkpd/files/lkpd-xxxxxxxx" -o lkpd.pdf
 ```
 
+## LKPD PDF Template
+
+- Header brand formal di semua halaman (logo kiri + judul multi-baris).
+- Background halaman putih dengan aksen biru di header.
+- Blok identitas siswa (hanya halaman 1):
+  - `Nama`
+  - `NIS`
+  - `Kelas`
+  - `Tanggal`
+- Metadata `Document ID` dan `Sumber` hanya di halaman 1.
+- Watermark belum diaktifkan.
+- Logo diambil dari `LKPD_HEADER_LOGO_PATH` (opsional; jika tidak ditemukan akan fallback ke header teks).
+- Judul header dikonfigurasi lewat:
+  - `LKPD_HEADER_TITLE_LINE1`
+  - `LKPD_HEADER_TITLE_LINE2`
+  - `LKPD_HEADER_TITLE_LINE3` (opsional, boleh kosong)
+
 ## RAG Isolation
 
 Default retrieval bersifat **per-file ketat**:
@@ -291,6 +310,11 @@ Default retrieval bersifat **per-file ketat**:
 - `LKPD_JOB_QUEUE_KEY` (default: `lkpd_jobs:queue`)
 - `LKPD_PDF_DIR` (default: `.generated/lkpd`)
 - `LKPD_PDF_TTL_SECONDS` (default: `86400`)
+- `LKPD_HEADER_LOGO_PATH` (default: `.assets/lkpd/logo.png`)
+- `LKPD_HEADER_ACCENT_HEX` (default: `#1F4E79`)
+- `LKPD_HEADER_TITLE_LINE1` (default: `LEMBAR KERJA PESERTA DIDIK (LKPD)`)
+- `LKPD_HEADER_TITLE_LINE2` (default: `SMARTER AI`)
+- `LKPD_HEADER_TITLE_LINE3` (default: kosong)
 - `APP_PUBLIC_BASE_URL` (default: `http://localhost:8000`)
 
 ## Catatan
