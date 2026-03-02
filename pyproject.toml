@@ -10,6 +10,7 @@ dependencies = [
   "pydantic>=2",
   "python-dotenv",
   "python-multipart",
+  "PyJWT>=2.10.1",
   "httpx",
   "redis>=5",
   "langchain",
