@@ -1,17 +1,40 @@
 from __future__ import annotations
 
-import json
+import logging
 from typing import Any
 
+from src.agent.infra.mcp_registry import MCPToolRegistry
+from src.agent.infra.memory_store import LongTermMemoryStore
 from src.agent.material_extractor import extract_material_text
-from src.agent.mcp import MCPToolRegistry
-from src.agent.memory import LongTermMemoryStore
-from src.agent.model import get_groq_chat_model
-from src.agent.prompts import (
-    build_lkpd_generation_prompt,
-    build_material_generation_prompt,
-)
 from src.agent.rag import MaterialRAGStore
+from src.agent.runtime_helpers.agent_factory import create_generation_agent
+from src.agent.runtime_helpers.contracts import (
+    build_mcp_insert_plan,
+    enforce_generation_contract,
+    enforce_lkpd_contract,
+)
+from src.agent.runtime_helpers.errors import (
+    LkpdValidationError,
+    MaterialTooLargeError,
+    MaterialValidationError,
+)
+from src.agent.runtime_helpers.internal_tools import build_internal_tools
+from src.agent.runtime_helpers.mcp_insert import insert_material_payload_via_mcp
+from src.agent.runtime_helpers.parsing import (
+    dedupe_warnings,
+    extract_json_candidate,
+    extract_messages,
+    extract_reply,
+    extract_tool_calls,
+    try_parse_generated_payload,
+    try_parse_lkpd_payload,
+)
+from src.agent.runtime_helpers.rag_context import (
+    build_lkpd_rag_context,
+    build_lkpd_rag_queries,
+    build_rag_context,
+    build_rag_queries,
+)
 from src.agent.types import (
     GenerateType,
     LkpdGenerateRuntimeResult,
@@ -24,19 +47,14 @@ from src.agent.types import (
     SourceRef,
     ToolCallLog,
 )
+from src.agent.prompts import (
+    build_lkpd_generation_prompt,
+    build_material_generation_prompt,
+)
 from src.config import settings
 
 
-class MaterialValidationError(ValueError):
-    pass
-
-
-class LkpdValidationError(ValueError):
-    pass
-
-
-class MaterialTooLargeError(MaterialValidationError):
-    pass
+logger = logging.getLogger(__name__)
 
 
 class AgentRuntime:
@@ -44,7 +62,6 @@ class AgentRuntime:
         self._memory_store = LongTermMemoryStore()
         self._mcp_registry = MCPToolRegistry()
         self._rag_store = MaterialRAGStore()
-        self._mcp_tools: list[Any] = []
         self._startup_warnings: list[str] = []
         self._initialized = False
 
@@ -57,7 +74,7 @@ class AgentRuntime:
         if self._initialized:
             return
 
-        self._mcp_tools = await self._mcp_registry.load_tools()
+        await self._mcp_registry.load_tools()
         self._startup_warnings.extend(self._mcp_registry.warnings)
         self._initialized = True
 
@@ -72,6 +89,7 @@ class AgentRuntime:
         file_bytes: bytes,
         filename: str,
         content_type: str | None,
+        job_id: str | None = None,
     ) -> MaterialGenerateResponse:
         await self.initialize()
 
@@ -101,16 +119,13 @@ class AgentRuntime:
         )
         warnings.extend(rag_warnings)
 
-        if request.mcp_enabled and self._mcp_registry.has_config and not self._mcp_tools:
+        mcp_tools = await self._mcp_registry.load_tools()
+        if request.mcp_enabled and self._mcp_registry.has_config and not mcp_tools:
             warnings.append("MCP is enabled, but no MCP tools are currently available.")
 
-        # Keep generation deterministic: disable internal memory tools for upload flows
-        # so the model returns JSON directly instead of tool-calling loops.
-        tools: list[Any] = []
-        if request.mcp_enabled:
-            tools.extend(self._mcp_tools)
-
-        agent = self._get_agent(tools=tools)
+        # Keep generation deterministic and prevent provider-side tool argument failures:
+        # generation step is JSON-only; MCP tools are invoked programmatically afterward.
+        agent = self._get_agent(tools=[])
         prompt = build_material_generation_prompt(
             material_text=rag_context,
             generate_types=request.generate_types,
@@ -126,11 +141,15 @@ class AgentRuntime:
         payload = {"messages": [{"role": "user", "content": prompt}]}
 
         result = await agent.ainvoke(payload, config=config)
-        tool_calls = self._extract_tool_calls(result)
         reply = self._extract_reply(result)
 
         parsed = self._try_parse_generated_payload(reply)
         if parsed is None:
+            logger.warning(
+                "model_output_validation_failed stage=initial_parse user_id=%s",
+                request.user_id,
+            )
+            warnings.append("model_output_validation_failed:initial_parse")
             retry_prompt = (
                 f"{prompt}\n\n"
                 "Your previous answer was invalid. Return only valid JSON that matches the required schema."
@@ -139,11 +158,14 @@ class AgentRuntime:
                 {"messages": [{"role": "user", "content": retry_prompt}]},
                 config=config,
             )
-            tool_calls.extend(self._extract_tool_calls(retry_result))
             retry_reply = self._extract_reply(retry_result)
             parsed = self._try_parse_generated_payload(retry_reply)
 
         if parsed is None:
+            logger.error(
+                "model_output_validation_failed stage=repair_parse user_id=%s",
+                request.user_id,
+            )
             raise MaterialValidationError(
                 "Model failed to produce valid JSON output after one retry."
             )
@@ -156,6 +178,23 @@ class AgentRuntime:
             summary_max_words=request.summary_max_words,
             warnings=warnings,
         )
+        tool_calls: list[ToolCallLog] = []
+
+        if request.mcp_enabled:
+            if not job_id:
+                warnings.append(
+                    "mcp_insert_failed:missing_job_id_for_programmatic_insert"
+                )
+            else:
+                mcp_tool_calls, mcp_warnings = await self._insert_material_payload_via_mcp(
+                    job_id=job_id,
+                    user_id=request.user_id,
+                    document_id=document_id,
+                    payload=payload_out,
+                    requested_types=request.generate_types,
+                )
+                tool_calls.extend(mcp_tool_calls)
+                warnings.extend(mcp_warnings)
 
         if "summary" in request.generate_types and payload_out.summary is not None:
             self._memory_store.remember_fact(
@@ -217,8 +256,7 @@ class AgentRuntime:
         warnings.extend(rag_warnings)
 
         # LKPD upload flow is JSON generation-only; do not attach tool-calling tools.
-        tools: list[Any] = []
-        agent = self._get_agent(tools=tools)
+        agent = self._get_agent(tools=[])
         prompt = build_lkpd_generation_prompt(
             material_text=rag_context,
             activity_count=request.activity_count,
@@ -279,54 +317,15 @@ class AgentRuntime:
         extracted_text: str,
         generate_types: list[GenerateType],
     ) -> tuple[str, list[SourceRef], list[str]]:
-        warnings: list[str] = []
-
-        try:
-            chunk_count, index_warnings = self._rag_store.index_material(
-                user_id=user_id,
-                document_id=document_id,
-                filename=filename,
-                file_type=file_type,
-                text=extracted_text,
-            )
-            warnings.extend(index_warnings)
-            if chunk_count <= 0:
-                warnings.append(
-                    "RAG indexing produced no chunks; using extracted text fallback."
-                )
-                return extracted_text, [], warnings
-        except Exception as exc:
-            warnings.append(f"RAG indexing failed; using extracted text fallback: {exc}")
-            return extracted_text, [], warnings
-
-        queries = self._build_rag_queries(
-            extracted_text,
-            generate_types=generate_types,
-        )
-        docs, retrieval_warnings = self._rag_store.retrieve_for_generation(
+        return build_rag_context(
+            rag_store=self._rag_store,
             user_id=user_id,
             document_id=document_id,
-            queries=queries,
+            filename=filename,
+            file_type=file_type,
+            extracted_text=extracted_text,
+            generate_types=generate_types,
         )
-        warnings.extend(retrieval_warnings)
-
-        if not docs:
-            warnings.append("RAG retrieval returned no chunks; using extracted text fallback.")
-            return extracted_text, [], warnings
-
-        context = "\n\n".join(doc.page_content for doc in docs)
-        sources: list[SourceRef] = []
-        for doc in docs:
-            metadata = doc.metadata or {}
-            sources.append(
-                SourceRef(
-                    chunk_id=metadata.get("chunk_id"),
-                    source_id=metadata.get("document_id"),
-                    excerpt=doc.page_content[:200],
-                )
-            )
-
-        return context, sources, warnings
 
     def _build_lkpd_rag_context(
         self,
@@ -337,51 +336,14 @@ class AgentRuntime:
         file_type: str,
         extracted_text: str,
     ) -> tuple[str, list[SourceRef], list[str]]:
-        warnings: list[str] = []
-
-        try:
-            chunk_count, index_warnings = self._rag_store.index_material(
-                user_id=user_id,
-                document_id=document_id,
-                filename=filename,
-                file_type=file_type,
-                text=extracted_text,
-            )
-            warnings.extend(index_warnings)
-            if chunk_count <= 0:
-                warnings.append(
-                    "RAG indexing produced no chunks; using extracted text fallback."
-                )
-                return extracted_text, [], warnings
-        except Exception as exc:
-            warnings.append(f"RAG indexing failed; using extracted text fallback: {exc}")
-            return extracted_text, [], warnings
-
-        queries = self._build_lkpd_rag_queries(extracted_text)
-        docs, retrieval_warnings = self._rag_store.retrieve_for_generation(
+        return build_lkpd_rag_context(
+            rag_store=self._rag_store,
             user_id=user_id,
             document_id=document_id,
-            queries=queries,
+            filename=filename,
+            file_type=file_type,
+            extracted_text=extracted_text,
         )
-        warnings.extend(retrieval_warnings)
-
-        if not docs:
-            warnings.append("RAG retrieval returned no chunks; using extracted text fallback.")
-            return extracted_text, [], warnings
-
-        context = "\n\n".join(doc.page_content for doc in docs)
-        sources: list[SourceRef] = []
-        for doc in docs:
-            metadata = doc.metadata or {}
-            sources.append(
-                SourceRef(
-                    chunk_id=metadata.get("chunk_id"),
-                    source_id=metadata.get("document_id"),
-                    excerpt=doc.page_content[:200],
-                )
-            )
-
-        return context, sources, warnings
 
     @staticmethod
     def _build_rag_queries(
@@ -389,130 +351,65 @@ class AgentRuntime:
         *,
         generate_types: list[GenerateType],
     ) -> list[str]:
-        topic_hint = " ".join(extracted_text.split()[:40])
-        queries = [f"konsep utama materi {topic_hint}"]
-        if "summary" in generate_types:
-            queries.append(f"ringkasan konsep utama materi {topic_hint}")
-        if "mcq" in generate_types:
-            queries.append(
-                f"fakta penting dan konsep untuk kuis pilihan ganda {topic_hint}"
-            )
-        if "essay" in generate_types:
-            queries.append(f"pemahaman mendalam untuk soal essay {topic_hint}")
-        return queries
+        return build_rag_queries(extracted_text, generate_types=generate_types)
 
     @staticmethod
     def _build_lkpd_rag_queries(extracted_text: str) -> list[str]:
-        topic_hint = " ".join(extracted_text.split()[:40])
-        return [
-            f"konsep utama dan tujuan pembelajaran materi {topic_hint}",
-            f"langkah kegiatan praktikum atau aktivitas pembelajaran {topic_hint}",
-            f"indikator penilaian dan rubrik tugas untuk materi {topic_hint}",
-        ]
+        return build_lkpd_rag_queries(extracted_text)
 
     def _get_agent(self, *, tools: list[Any]):
-        try:
-            from langchain.agents import create_agent
-        except ImportError as exc:
-            raise RuntimeError(
-                "langchain is not installed. Install dependencies before using /api/material."
-            ) from exc
+        return create_generation_agent(tools=tools)
 
-        return create_agent(
-            model=get_groq_chat_model(),
-            tools=tools,
+    async def _insert_material_payload_via_mcp(
+        self,
+        *,
+        job_id: str,
+        user_id: str,
+        document_id: str,
+        payload: MaterialGeneratedPayload,
+        requested_types: list[GenerateType],
+    ) -> tuple[list[ToolCallLog], list[str]]:
+        return await insert_material_payload_via_mcp(
+            registry=self._mcp_registry,
+            logger=logger,
+            job_id=job_id,
+            user_id=user_id,
+            document_id=document_id,
+            payload=payload,
+            requested_types=requested_types,
+        )
+
+    @staticmethod
+    def _build_mcp_insert_plan(
+        *,
+        job_id: str,
+        user_id: str,
+        document_id: str,
+        payload: MaterialGeneratedPayload,
+        requested_types: list[GenerateType],
+    ) -> tuple[list[tuple[str, dict[str, Any]]], list[str]]:
+        return build_mcp_insert_plan(
+            job_id=job_id,
+            user_id=user_id,
+            document_id=document_id,
+            payload=payload,
+            requested_types=requested_types,
         )
 
     def _build_internal_tools(self, *, user_id: str) -> list[Any]:
-        try:
-            from langchain_core.tools import tool
-        except ImportError as exc:
-            raise RuntimeError(
-                "langchain-core is not installed. Install dependencies before using /api/material."
-            ) from exc
-
-        memory_store = self._memory_store
-
-        @tool
-        def remember_user_fact(fact: str, memory_type: str = "general") -> str:
-            """Save a durable user fact into long-term memory."""
-            memory_id = memory_store.remember_fact(
-                user_id=user_id,
-                fact=fact,
-                memory_type=memory_type,
-            )
-            if not memory_id:
-                return "No memory saved because the fact was empty."
-            return f"Saved memory with id {memory_id}."
-
-        @tool
-        def recall_user_facts(query: str = "", limit: int = 5) -> str:
-            """Recall previously saved user facts for personalization."""
-            docs = memory_store.recall_user_facts(
-                user_id=user_id,
-                query=query,
-                limit=limit,
-            )
-            if not docs:
-                return "No memories found for this user."
-
-            lines: list[str] = []
-            for idx, doc in enumerate(docs, start=1):
-                metadata = doc.metadata or {}
-                memory_type = metadata.get("memory_type", "general")
-                created_at = metadata.get("created_at", "unknown")
-                lines.append(
-                    f"{idx}. [{memory_type}] ({created_at}) {doc.page_content}"
-                )
-            return "\n".join(lines)
-
-        return [remember_user_fact, recall_user_facts]
+        return build_internal_tools(memory_store=self._memory_store, user_id=user_id)
 
     @staticmethod
     def _try_parse_generated_payload(reply: str) -> MaterialGeneratedPayload | None:
-        candidate = AgentRuntime._extract_json_candidate(reply)
-        if not candidate:
-            return None
-
-        try:
-            raw = json.loads(candidate)
-        except json.JSONDecodeError:
-            return None
-
-        try:
-            return MaterialGeneratedPayload.model_validate(raw)
-        except Exception:
-            return None
+        return try_parse_generated_payload(reply)
 
     @staticmethod
     def _try_parse_lkpd_payload(reply: str) -> LkpdGeneratedPayload | None:
-        candidate = AgentRuntime._extract_json_candidate(reply)
-        if not candidate:
-            return None
-
-        try:
-            raw = json.loads(candidate)
-        except json.JSONDecodeError:
-            return None
-
-        try:
-            return LkpdGeneratedPayload.model_validate(raw)
-        except Exception:
-            return None
+        return try_parse_lkpd_payload(reply)
 
     @staticmethod
     def _extract_json_candidate(text: str) -> str:
-        stripped = text.strip()
-        if stripped.startswith("```"):
-            lines = stripped.splitlines()
-            if len(lines) >= 3:
-                stripped = "\n".join(lines[1:-1]).strip()
-
-        start = stripped.find("{")
-        end = stripped.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return ""
-        return stripped[start : end + 1]
+        return extract_json_candidate(text)
 
     @staticmethod
     def _enforce_generation_contract(
@@ -524,61 +421,15 @@ class AgentRuntime:
         summary_max_words: int,
         warnings: list[str],
     ) -> MaterialGeneratedPayload:
-        selected = set(generate_types)
-
-        if "mcq" in selected:
-            if payload.mcq_quiz is None:
-                raise MaterialValidationError("Model did not return mcq_quiz.")
-
-            mcq_questions = payload.mcq_quiz.questions
-            if len(mcq_questions) < mcq_count:
-                raise MaterialValidationError(
-                    f"Model generated too few multiple-choice questions ({len(mcq_questions)} < {mcq_count})."
-                )
-            if len(mcq_questions) > mcq_count:
-                warnings.append(
-                    f"MCQ questions trimmed from {len(mcq_questions)} to {mcq_count}."
-                )
-                mcq_questions = mcq_questions[:mcq_count]
-            payload.mcq_quiz.questions = mcq_questions
-        elif payload.mcq_quiz is not None:
-            warnings.append("Model returned mcq_quiz even though it was not requested.")
-            payload.mcq_quiz = None
-
-        if "essay" in selected:
-            if payload.essay_quiz is None:
-                raise MaterialValidationError("Model did not return essay_quiz.")
-
-            essay_questions = payload.essay_quiz.questions
-            if len(essay_questions) < essay_count:
-                raise MaterialValidationError(
-                    f"Model generated too few essay questions ({len(essay_questions)} < {essay_count})."
-                )
-            if len(essay_questions) > essay_count:
-                warnings.append(
-                    f"Essay questions trimmed from {len(essay_questions)} to {essay_count}."
-                )
-                essay_questions = essay_questions[:essay_count]
-            payload.essay_quiz.questions = essay_questions
-        elif payload.essay_quiz is not None:
-            warnings.append("Model returned essay_quiz even though it was not requested.")
-            payload.essay_quiz = None
-
-        if "summary" in selected:
-            if payload.summary is None:
-                raise MaterialValidationError("Model did not return summary.")
-
-            overview_words = payload.summary.overview.split()
-            if len(overview_words) > summary_max_words:
-                warnings.append(
-                    f"Summary overview trimmed from {len(overview_words)} to {summary_max_words} words."
-                )
-                payload.summary.overview = " ".join(overview_words[:summary_max_words])
-        elif payload.summary is not None:
-            warnings.append("Model returned summary even though it was not requested.")
-            payload.summary = None
-
-        return payload
+        return enforce_generation_contract(
+            payload,
+            generate_types=generate_types,
+            mcq_count=mcq_count,
+            essay_count=essay_count,
+            summary_max_words=summary_max_words,
+            warnings=warnings,
+            logger=logger,
+        )
 
     @staticmethod
     def _enforce_lkpd_contract(
@@ -587,109 +438,33 @@ class AgentRuntime:
         activity_count: int,
         warnings: list[str],
     ) -> LkpdGeneratedPayload:
-        lkpd = payload.lkpd
-
-        if not lkpd.learning_objectives:
-            raise LkpdValidationError("LKPD must contain learning objectives.")
-        if not lkpd.instructions:
-            raise LkpdValidationError("LKPD must contain instructions.")
-        if not lkpd.assessment_rubric:
-            raise LkpdValidationError("LKPD must contain assessment rubric.")
-
-        activities = lkpd.activities
-        if len(activities) < activity_count:
-            raise LkpdValidationError(
-                f"Model generated too few LKPD activities ({len(activities)} < {activity_count})."
-            )
-        if len(activities) > activity_count:
-            warnings.append(
-                f"LKPD activities trimmed from {len(activities)} to {activity_count}."
-            )
-            activities = activities[:activity_count]
-
-        for idx, activity in enumerate(activities, start=1):
-            activity.activity_no = idx
-        lkpd.activities = activities
-
-        return payload
+        return enforce_lkpd_contract(
+            payload,
+            activity_count=activity_count,
+            warnings=warnings,
+        )
 
     @staticmethod
     def _extract_reply(result: Any) -> str:
-        messages = AgentRuntime._extract_messages(result)
-        for message in reversed(messages):
-            message_type = getattr(message, "type", "")
-            if message_type != "ai":
-                continue
-
-            content = getattr(message, "content", "")
-            if isinstance(content, str) and content.strip():
-                return content.strip()
-
-            if isinstance(content, list):
-                chunks: list[str] = []
-                for item in content:
-                    if isinstance(item, dict):
-                        text = item.get("text")
-                        if isinstance(text, str) and text.strip():
-                            chunks.append(text.strip())
-                if chunks:
-                    return "\n".join(chunks)
-
-        if isinstance(result, dict):
-            output = result.get("output")
-            if isinstance(output, str) and output.strip():
-                return output.strip()
-
-        return ""
+        return extract_reply(result)
 
     @staticmethod
     def _extract_tool_calls(result: Any) -> list[ToolCallLog]:
-        logs: list[ToolCallLog] = []
-        for message in AgentRuntime._extract_messages(result):
-            raw_calls = getattr(message, "tool_calls", None)
-            if not raw_calls:
-                continue
-
-            for call in raw_calls:
-                if not isinstance(call, dict):
-                    continue
-
-                arguments = call.get("args", {})
-                if isinstance(arguments, str):
-                    try:
-                        parsed = json.loads(arguments)
-                        arguments = parsed if isinstance(parsed, dict) else {"raw": arguments}
-                    except json.JSONDecodeError:
-                        arguments = {"raw": arguments}
-                elif not isinstance(arguments, dict):
-                    arguments = {"value": arguments}
-
-                logs.append(
-                    ToolCallLog(
-                        name=str(call.get("name", "")),
-                        arguments=arguments,
-                        call_id=call.get("id"),
-                    )
-                )
-
-        return logs
+        return extract_tool_calls(result)
 
     @staticmethod
     def _extract_messages(result: Any) -> list[Any]:
-        if isinstance(result, dict):
-            messages = result.get("messages")
-            if isinstance(messages, list):
-                return messages
-        return []
+        return extract_messages(result)
 
     @staticmethod
     def _dedupe_warnings(warnings: list[str]) -> list[str]:
-        seen: set[str] = set()
-        deduped: list[str] = []
-        for warning in warnings:
-            clean = warning.strip()
-            if not clean or clean in seen:
-                continue
-            seen.add(clean)
-            deduped.append(clean)
-        return deduped
+        return dedupe_warnings(warnings)
+
+
+__all__ = [
+    "AgentRuntime",
+    "MaterialValidationError",
+    "LkpdValidationError",
+    "MaterialTooLargeError",
+]
+

@@ -1,17 +1,29 @@
-import asyncio, json, os
-from langchain_mcp_adapters.client import MultiServerMCPClient
+import asyncio
+import json
+import os
+from pathlib import Path
+
 from dotenv import load_dotenv
+
 load_dotenv()
-PAYLOAD_PATH = "testspayload-essay.json"
+PAYLOAD_PATH = Path(__file__).with_name("payload-essay.json")
+
 
 async def main():
-    servers = json.loads(os.environ["MCP_SERVERS_JSON"])
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+
+    raw_servers = os.environ.get("MCP_SERVERS_JSON", "{}")
+    servers = json.loads(raw_servers)
+    if not servers:
+        raise RuntimeError("MCP_SERVERS_JSON is empty. Configure at least one server.")
+
     client = MultiServerMCPClient(servers)
     tools = await client.get_tools()
 
     tool = next(t for t in tools if t.name == "insert_essay")
 
-    payload = json.load(open(PAYLOAD_PATH, "r", encoding="utf-8"))
+    with PAYLOAD_PATH.open("r", encoding="utf-8") as fh:
+        payload = json.load(fh)
 
     result = await tool.ainvoke(payload)
     print("RESULT:", result)
@@ -20,4 +32,6 @@ async def main():
     if callable(aclose):
         await aclose()
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
