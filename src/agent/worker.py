@@ -109,6 +109,7 @@ class MaterialJobWorker:
                 file_bytes=self._job_store.decode_file_bytes(job),
                 filename=job.filename,
                 content_type=job.content_type,
+                job_id=job.job_id,
             )
             callback_payload = MaterialWebhookResultPayload(
                 job_id=job.job_id,

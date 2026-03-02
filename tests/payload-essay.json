@@ -1,44 +1,21 @@
 {
-  "event": "material.generated",
   "job_id": "job-aef0a63eb3814d7290e95d99a622b366",
-  "status": "succeeded",
   "user_id": "1",
-  "result": {
-    "user_id": "1",
-    "document_id": "doc-9ecbbc152356479381cc6881ee89186e",
-    "material": {
-      "filename": "SMARTCLASS AI (1).pdf",
-      "file_type": "pdf",
-      "extracted_chars": 4758
-    },
-    "essay_quiz": {
-      "questions": [
-        {
-          "question": "Bagaimana SmartClass AI dapat membantu guru menghemat waktu dalam menyusun evaluasi pembelajaran?",
-          "expected_points": "5"
-        },
-        {
-          "question": "Apa kelebihan dari konsep One Upload – Multi Output Teaching dalam sistem SmartClass AI?",
-          "expected_points": "5"
-        },
-        {
-          "question": "Bagaimana sistem SmartClass AI dapat mendukung pembelajaran digital yang lebih adaptif dan terstruktur?",
-          "expected_points": "5"
-        }
-      ]
-    },
-    "sources": [
+  "document_id": "doc-9ecbbc152356479381cc6881ee89186e",
+  "essay_quiz": {
+    "questions": [
       {
-        "chunk_id": "doc-9ecbbc152356479381cc6881ee89186e:chunk:0",
-        "source_id": "doc-9ecbbc152356479381cc6881ee89186e",
-        "excerpt": "SMARTCLASS AI Sistem Classroom Berbasis Artificial Intelligence..."
+        "question": "Bagaimana SmartClass AI membantu guru menyusun evaluasi lebih cepat?",
+        "expected_points": "5"
+      },
+      {
+        "question": "Apa kelebihan konsep One Upload - Multi Output Teaching?",
+        "expected_points": "5"
+      },
+      {
+        "question": "Bagaimana SmartClass AI mendukung pembelajaran digital adaptif?",
+        "expected_points": "5"
       }
-    ],
-    "tool_calls": [],
-    "warnings": [
-      "RAG retrieval failed; fallback to memory"
     ]
-  },
-  "attempt": 1,
-  "finished_at": "2026-03-01T05:00:04.002083Z"
+  }
 }

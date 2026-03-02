@@ -160,6 +160,27 @@ class LkpdGeneratedPayload(BaseModel):
     lkpd: LkpdContent
 
 
+class McqInsertArgs(BaseModel):
+    job_id: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    document_id: str = Field(min_length=1)
+    mcq_quiz: McqQuiz
+
+
+class EssayInsertArgs(BaseModel):
+    job_id: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    document_id: str = Field(min_length=1)
+    essay_quiz: EssayQuiz
+
+
+class SummaryInsertArgs(BaseModel):
+    job_id: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    document_id: str = Field(min_length=1)
+    summary: SummaryContent
+
+
 class MaterialGenerateResponse(BaseModel):
     user_id: str
     document_id: str

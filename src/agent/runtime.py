@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from src.agent.material_extractor import extract_material_text
@@ -13,18 +14,24 @@ from src.agent.prompts import (
 )
 from src.agent.rag import MaterialRAGStore
 from src.agent.types import (
+    EssayInsertArgs,
     GenerateType,
     LkpdGenerateRuntimeResult,
     LkpdGeneratedPayload,
     LkpdUploadRequest,
+    McqInsertArgs,
     MaterialGenerateResponse,
     MaterialGeneratedPayload,
     MaterialInfo,
     MaterialUploadRequest,
     SourceRef,
+    SummaryInsertArgs,
     ToolCallLog,
 )
 from src.config import settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class MaterialValidationError(ValueError):
@@ -44,7 +51,6 @@ class AgentRuntime:
         self._memory_store = LongTermMemoryStore()
         self._mcp_registry = MCPToolRegistry()
         self._rag_store = MaterialRAGStore()
-        self._mcp_tools: list[Any] = []
         self._startup_warnings: list[str] = []
         self._initialized = False
 
@@ -57,7 +63,7 @@ class AgentRuntime:
         if self._initialized:
             return
 
-        self._mcp_tools = await self._mcp_registry.load_tools()
+        await self._mcp_registry.load_tools()
         self._startup_warnings.extend(self._mcp_registry.warnings)
         self._initialized = True
 
@@ -72,6 +78,7 @@ class AgentRuntime:
         file_bytes: bytes,
         filename: str,
         content_type: str | None,
+        job_id: str | None = None,
     ) -> MaterialGenerateResponse:
         await self.initialize()
 
@@ -101,16 +108,13 @@ class AgentRuntime:
         )
         warnings.extend(rag_warnings)
 
-        if request.mcp_enabled and self._mcp_registry.has_config and not self._mcp_tools:
+        mcp_tools = await self._mcp_registry.load_tools()
+        if request.mcp_enabled and self._mcp_registry.has_config and not mcp_tools:
             warnings.append("MCP is enabled, but no MCP tools are currently available.")
 
-        # Keep generation deterministic: disable internal memory tools for upload flows
-        # so the model returns JSON directly instead of tool-calling loops.
-        tools: list[Any] = []
-        if request.mcp_enabled:
-            tools.extend(self._mcp_tools)
-
-        agent = self._get_agent(tools=tools)
+        # Keep generation deterministic and prevent provider-side tool argument failures:
+        # generation step is JSON-only; MCP tools are invoked programmatically afterward.
+        agent = self._get_agent(tools=[])
         prompt = build_material_generation_prompt(
             material_text=rag_context,
             generate_types=request.generate_types,
@@ -126,11 +130,15 @@ class AgentRuntime:
         payload = {"messages": [{"role": "user", "content": prompt}]}
 
         result = await agent.ainvoke(payload, config=config)
-        tool_calls = self._extract_tool_calls(result)
         reply = self._extract_reply(result)
 
         parsed = self._try_parse_generated_payload(reply)
         if parsed is None:
+            logger.warning(
+                "model_output_validation_failed stage=initial_parse user_id=%s",
+                request.user_id,
+            )
+            warnings.append("model_output_validation_failed:initial_parse")
             retry_prompt = (
                 f"{prompt}\n\n"
                 "Your previous answer was invalid. Return only valid JSON that matches the required schema."
@@ -139,11 +147,14 @@ class AgentRuntime:
                 {"messages": [{"role": "user", "content": retry_prompt}]},
                 config=config,
             )
-            tool_calls.extend(self._extract_tool_calls(retry_result))
             retry_reply = self._extract_reply(retry_result)
             parsed = self._try_parse_generated_payload(retry_reply)
 
         if parsed is None:
+            logger.error(
+                "model_output_validation_failed stage=repair_parse user_id=%s",
+                request.user_id,
+            )
             raise MaterialValidationError(
                 "Model failed to produce valid JSON output after one retry."
             )
@@ -156,6 +167,26 @@ class AgentRuntime:
             summary_max_words=request.summary_max_words,
             warnings=warnings,
         )
+        tool_calls: list[ToolCallLog] = []
+
+        if request.mcp_enabled:
+            if not job_id:
+                warnings.append(
+                    "mcp_insert_failed:missing_job_id_for_programmatic_insert"
+                )
+            else:
+                (
+                    mcp_tool_calls,
+                    mcp_warnings,
+                ) = await self._insert_material_payload_via_mcp(
+                    job_id=job_id,
+                    user_id=request.user_id,
+                    document_id=document_id,
+                    payload=payload_out,
+                    requested_types=request.generate_types,
+                )
+                tool_calls.extend(mcp_tool_calls)
+                warnings.extend(mcp_warnings)
 
         if "summary" in request.generate_types and payload_out.summary is not None:
             self._memory_store.remember_fact(
@@ -423,6 +454,120 @@ class AgentRuntime:
             tools=tools,
         )
 
+    async def _insert_material_payload_via_mcp(
+        self,
+        *,
+        job_id: str,
+        user_id: str,
+        document_id: str,
+        payload: MaterialGeneratedPayload,
+        requested_types: list[GenerateType],
+    ) -> tuple[list[ToolCallLog], list[str]]:
+        warnings: list[str] = []
+        calls: list[ToolCallLog] = []
+
+        plans, plan_warnings = self._build_mcp_insert_plan(
+            job_id=job_id,
+            user_id=user_id,
+            document_id=document_id,
+            payload=payload,
+            requested_types=requested_types,
+        )
+        warnings.extend(plan_warnings)
+
+        for tool_name, args in plans:
+            try:
+                result = await self._mcp_registry.call_mcp_tool(
+                    tool_name=tool_name,
+                    args=args,
+                )
+                call_id = None
+                if isinstance(result, dict):
+                    maybe_call_id = result.get("call_id") or result.get("id")
+                    if maybe_call_id is not None:
+                        call_id = str(maybe_call_id)
+                calls.append(
+                    ToolCallLog(
+                        name=tool_name,
+                        arguments=args,
+                        call_id=call_id,
+                    )
+                )
+            except Exception as exc:
+                logger.exception(
+                    "mcp_insert_failed tool=%s job_id=%s document_id=%s",
+                    tool_name,
+                    job_id,
+                    document_id,
+                )
+                warnings.append(f"mcp_insert_failed:{tool_name}:{exc}")
+
+        return calls, warnings
+
+    @staticmethod
+    def _build_mcp_insert_plan(
+        *,
+        job_id: str,
+        user_id: str,
+        document_id: str,
+        payload: MaterialGeneratedPayload,
+        requested_types: list[GenerateType],
+    ) -> tuple[list[tuple[str, dict[str, Any]]], list[str]]:
+        plans: list[tuple[str, dict[str, Any]]] = []
+        warnings: list[str] = []
+        selected = set(requested_types)
+
+        if "mcq" in selected:
+            if payload.mcq_quiz is None:
+                warnings.append("mcp_insert_skipped:mcq_quiz_missing")
+            else:
+                mcq_args = McqInsertArgs(
+                    job_id=job_id,
+                    user_id=user_id,
+                    document_id=document_id,
+                    mcq_quiz=payload.mcq_quiz,
+                )
+                plans.append(
+                    (
+                        "insert_mcq",
+                        mcq_args.model_dump(mode="json"),
+                    )
+                )
+        if "essay" in selected:
+            if payload.essay_quiz is None:
+                warnings.append("mcp_insert_skipped:essay_quiz_missing")
+            else:
+                essay_args = EssayInsertArgs(
+                    job_id=job_id,
+                    user_id=user_id,
+                    document_id=document_id,
+                    essay_quiz=payload.essay_quiz,
+                )
+                plans.append(
+                    (
+                        "insert_essay",
+                        essay_args.model_dump(mode="json"),
+                    )
+                )
+        if "summary" in selected:
+            if payload.summary is None:
+                warnings.append("mcp_insert_skipped:summary_missing")
+            else:
+                summary_args = SummaryInsertArgs(
+                    job_id=job_id,
+                    user_id=user_id,
+                    document_id=document_id,
+                    summary=payload.summary,
+                )
+                plans.append(
+                    (
+                        "insert_summary",
+                        summary_args.model_dump(mode="json"),
+                    )
+                )
+
+        return plans, warnings
+
     def _build_internal_tools(self, *, user_id: str) -> list[Any]:
         try:
             from langchain_core.tools import tool
@@ -528,52 +673,67 @@ class AgentRuntime:
 
         if "mcq" in selected:
             if payload.mcq_quiz is None:
-                raise MaterialValidationError("Model did not return mcq_quiz.")
-
-            mcq_questions = payload.mcq_quiz.questions
-            if len(mcq_questions) < mcq_count:
-                raise MaterialValidationError(
-                    f"Model generated too few multiple-choice questions ({len(mcq_questions)} < {mcq_count})."
-                )
-            if len(mcq_questions) > mcq_count:
-                warnings.append(
-                    f"MCQ questions trimmed from {len(mcq_questions)} to {mcq_count}."
-                )
-                mcq_questions = mcq_questions[:mcq_count]
-            payload.mcq_quiz.questions = mcq_questions
+                logger.warning("model_output_validation_failed type=mcq reason=missing")
+                warnings.append("model_output_validation_failed:mcq_missing")
+            else:
+                mcq_questions = payload.mcq_quiz.questions
+                if len(mcq_questions) < mcq_count:
+                    logger.warning(
+                        "model_output_validation_failed type=mcq reason=too_few got=%s expected=%s",
+                        len(mcq_questions),
+                        mcq_count,
+                    )
+                    warnings.append(
+                        f"model_output_validation_failed:mcq_count_lt_requested:{len(mcq_questions)}<{mcq_count}"
+                    )
+                if len(mcq_questions) > mcq_count:
+                    warnings.append(
+                        f"MCQ questions trimmed from {len(mcq_questions)} to {mcq_count}."
+                    )
+                    mcq_questions = mcq_questions[:mcq_count]
+                payload.mcq_quiz.questions = mcq_questions
         elif payload.mcq_quiz is not None:
             warnings.append("Model returned mcq_quiz even though it was not requested.")
             payload.mcq_quiz = None
 
         if "essay" in selected:
             if payload.essay_quiz is None:
-                raise MaterialValidationError("Model did not return essay_quiz.")
-
-            essay_questions = payload.essay_quiz.questions
-            if len(essay_questions) < essay_count:
-                raise MaterialValidationError(
-                    f"Model generated too few essay questions ({len(essay_questions)} < {essay_count})."
-                )
-            if len(essay_questions) > essay_count:
-                warnings.append(
-                    f"Essay questions trimmed from {len(essay_questions)} to {essay_count}."
-                )
-                essay_questions = essay_questions[:essay_count]
-            payload.essay_quiz.questions = essay_questions
+                logger.warning("model_output_validation_failed type=essay reason=missing")
+                warnings.append("model_output_validation_failed:essay_missing")
+            else:
+                essay_questions = payload.essay_quiz.questions
+                if len(essay_questions) < essay_count:
+                    logger.warning(
+                        "model_output_validation_failed type=essay reason=too_few got=%s expected=%s",
+                        len(essay_questions),
+                        essay_count,
+                    )
+                    warnings.append(
+                        f"model_output_validation_failed:essay_count_lt_requested:{len(essay_questions)}<{essay_count}"
+                    )
+                if len(essay_questions) > essay_count:
+                    warnings.append(
+                        f"Essay questions trimmed from {len(essay_questions)} to {essay_count}."
+                    )
+                    essay_questions = essay_questions[:essay_count]
+                payload.essay_quiz.questions = essay_questions
         elif payload.essay_quiz is not None:
             warnings.append("Model returned essay_quiz even though it was not requested.")
             payload.essay_quiz = None
 
         if "summary" in selected:
             if payload.summary is None:
-                raise MaterialValidationError("Model did not return summary.")
-
-            overview_words = payload.summary.overview.split()
-            if len(overview_words) > summary_max_words:
-                warnings.append(
-                    f"Summary overview trimmed from {len(overview_words)} to {summary_max_words} words."
-                )
-                payload.summary.overview = " ".join(overview_words[:summary_max_words])
+                logger.warning("model_output_validation_failed type=summary reason=missing")
+                warnings.append("model_output_validation_failed:summary_missing")
+            else:
+                overview_words = payload.summary.overview.split()
+                if len(overview_words) > summary_max_words:
+                    warnings.append(
+                        f"Summary overview trimmed from {len(overview_words)} to {summary_max_words} words."
+                    )
+                    payload.summary.overview = " ".join(
+                        overview_words[:summary_max_words]
+                    )
         elif payload.summary is not None:
             warnings.append("Model returned summary even though it was not requested.")
             payload.summary = None
