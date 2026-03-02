@@ -22,4 +22,3 @@ def get_groq_chat_model():
         timeout=settings.groq_timeout_seconds,
         max_retries=2,
     )
-

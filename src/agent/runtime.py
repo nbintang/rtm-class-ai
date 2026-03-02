@@ -5,9 +5,9 @@ import logging
 from typing import Any
 
 from src.agent.material_extractor import extract_material_text
-from src.agent.mcp import MCPToolRegistry
-from src.agent.memory import LongTermMemoryStore
-from src.agent.model import get_groq_chat_model
+from src.agent.infra.mcp_registry import MCPToolRegistry
+from src.agent.infra.memory_store import LongTermMemoryStore
+from src.agent.infra.model_provider import get_groq_chat_model
 from src.agent.prompts import (
     build_lkpd_generation_prompt,
     build_material_generation_prompt,
