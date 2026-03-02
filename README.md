@@ -3,6 +3,7 @@
 Standalone FastAPI microservice for async material generation and LKPD generation from uploaded files.
 
 ## What this service does
+
 - Accepts file uploads for:
   - `POST /api/material` (generate `mcq`, `essay`, `summary`)
   - `POST /api/lkpd` (generate LKPD + downloadable PDF)
@@ -11,6 +12,7 @@ Standalone FastAPI microservice for async material generation and LKPD generatio
 - Delivers final result to `callback_url` via HTTP POST
 
 ## Current architecture flow
+
 1. Client submits multipart form request.
 2. API validates request and stores job in Redis.
 3. Worker pulls queue, extracts text (`.pdf`, `.pptx`, `.txt`), indexes RAG, calls model.
@@ -18,6 +20,7 @@ Standalone FastAPI microservice for async material generation and LKPD generatio
 5. LKPD flow also renders a PDF and exposes a temporary download URL.
 
 ## Tech stack
+
 - Python 3.11
 - FastAPI + Uvicorn
 - Redis (async queue + job metadata)
@@ -27,11 +30,13 @@ Standalone FastAPI microservice for async material generation and LKPD generatio
 - ReportLab (LKPD PDF rendering)
 
 ## Requirements
+
 - Python `>=3.11`
 - Redis server
 - `GROQ_API_KEY` set in `.env`
 
 ## Local setup
+
 ```bash
 python -m venv .venv
 # Windows
@@ -44,32 +49,39 @@ cp .env.example .env
 ```
 
 ## Run locally
+
 ```bash
 uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 Alternative launcher:
+
 ```bash
 python cmd/run.py
 ```
 
 ## Run with Docker Compose
+
 1. Fill `.env` (minimum: `GROQ_API_KEY`).
 2. Start services:
+
 ```bash
 docker compose up --build
 ```
 
 Service endpoints:
+
 - API: `http://localhost:8000`
 - Redis: `localhost:6379`
 
 Stop:
+
 ```bash
 docker compose down
 ```
 
 Task shortcuts (taskipy):
+
 ```bash
 uv run task up
 uv run task upd
@@ -80,8 +92,17 @@ uv run task ps
 
 ## HTTP API
 
+All API endpoints in this section are intended for service-to-service usage.  
+When JWT auth is enabled, requests must include:
+
+- `Authorization: Bearer <JWT>`
+- `iss`, `aud`, `sub`, `iat`, `exp` claims
+- Endpoint scope in `scope` claim
+
 ### `POST /api/material`
+
 Multipart form fields:
+
 - `user_id` (required, non-empty)
 - `file` (required, one file: `.pdf`, `.pptx`, `.txt`)
 - `callback_url` (required, valid `http/https`)
@@ -92,6 +113,7 @@ Multipart form fields:
 - `mcp_enabled` (optional, default `true`)
 
 Response (`202`):
+
 ```json
 {
   "job_id": "job-...",
@@ -101,13 +123,16 @@ Response (`202`):
 ```
 
 ### `POST /api/lkpd`
+
 Multipart form fields:
+
 - `user_id` (required, non-empty)
 - `file` (required, one file: `.pdf`, `.pptx`, `.txt`)
 - `callback_url` (required, valid `http/https`)
 - `activity_count` (optional, default `5`, constrained by env min/max)
 
 Response (`202`):
+
 ```json
 {
   "job_id": "job-...",
@@ -117,12 +142,14 @@ Response (`202`):
 ```
 
 ### `GET /api/lkpd/files/{file_id}`
+
 - Returns generated LKPD PDF (`application/pdf`)
 - Returns `404` if file is missing or expired
 
 ## Callback contract
 
 ### Delivery behavior
+
 - Callback target: your submitted `callback_url`
 - Method: `POST` JSON
 - Attempts: `1 + WEBHOOK_CALLBACK_MAX_RETRIES`
@@ -130,11 +157,14 @@ Response (`202`):
 - Backoff: `WEBHOOK_CALLBACK_BACKOFF_SECONDS` (default `5,15,45`) with small jitter
 
 ### Material event: `material.generated`
+
 `status` values in callback payload:
+
 - `succeeded`
 - `failed_processing`
 
 Success example:
+
 ```json
 {
   "event": "material.generated",
@@ -149,8 +179,8 @@ Success example:
       "file_type": "pdf",
       "extracted_chars": 12345
     },
-    "mcq_quiz": {"questions": []},
-    "essay_quiz": {"questions": []},
+    "mcq_quiz": { "questions": [] },
+    "essay_quiz": { "questions": [] },
     "summary": {
       "title": "...",
       "overview": "...",
@@ -166,6 +196,7 @@ Success example:
 ```
 
 Failed processing example:
+
 ```json
 {
   "event": "material.generated",
@@ -182,11 +213,14 @@ Failed processing example:
 ```
 
 ### LKPD event: `lkpd.generated`
+
 `status` values in callback payload:
+
 - `succeeded`
 - `failed_processing`
 
 Success example:
+
 ```json
 {
   "event": "lkpd.generated",
@@ -232,6 +266,7 @@ Success example:
 ```
 
 Failed processing example:
+
 ```json
 {
   "event": "lkpd.generated",
@@ -248,6 +283,7 @@ Failed processing example:
 ```
 
 ### Internal job statuses (Redis record)
+
 - `accepted`
 - `processing`
 - `succeeded`
@@ -256,9 +292,24 @@ Failed processing example:
 
 ## Example curl
 
-Submit material job:
+Generate JWT (Python helper):
+
 ```bash
+python cmd/jwt_client.py token \
+  --secret "$JWT_SECRET" \
+  --issuer "$JWT_ISSUER" \
+  --audience "$JWT_AUDIENCE" \
+  --subject "service:backend" \
+  --scope "material:write lkpd:write lkpd:read"
+```
+
+Submit material job:
+
+```bash
+TOKEN=$(python cmd/jwt_client.py token --secret "$JWT_SECRET")
+
 curl -X POST http://localhost:8000/api/material \
+  -H "Authorization: Bearer $TOKEN" \
   -F "user_id=user-1" \
   -F "callback_url=https://example.com/hooks/material" \
   -F "generate_types=mcq" \
@@ -272,8 +323,12 @@ curl -X POST http://localhost:8000/api/material \
 ```
 
 Submit LKPD job:
+
 ```bash
+TOKEN=$(python cmd/jwt_client.py token --secret "$JWT_SECRET")
+
 curl -X POST http://localhost:8000/api/lkpd \
+  -H "Authorization: Bearer $TOKEN" \
   -F "user_id=user-1" \
   -F "callback_url=https://example.com/hooks/lkpd" \
   -F "activity_count=5" \
@@ -281,11 +336,17 @@ curl -X POST http://localhost:8000/api/lkpd \
 ```
 
 Download LKPD PDF:
+
 ```bash
-curl -L "http://localhost:8000/api/lkpd/files/lkpd-xxxxxxxx" -o lkpd.pdf
+TOKEN=$(python cmd/jwt_client.py token --secret "$JWT_SECRET")
+
+curl -L "http://localhost:8000/api/lkpd/files/lkpd-xxxxxxxx" \
+  -H "Authorization: Bearer $TOKEN" \
+  -o lkpd.pdf
 ```
 
 ## LKPD PDF output behavior
+
 - PDF generated with branded header on every page
 - Optional logo from `LKPD_HEADER_LOGO_PATH`
 - Header title lines configurable (`LINE1`, `LINE2`, `LINE3`)
@@ -296,17 +357,20 @@ curl -L "http://localhost:8000/api/lkpd/files/lkpd-xxxxxxxx" -o lkpd.pdf
 - Stored in `LKPD_PDF_DIR` and expired using `LKPD_PDF_TTL_SECONDS`
 
 ## RAG isolation behavior
+
 - Each upload gets a new `document_id`
 - Retrieval filter is strict by `user_id + document_id`
 - New uploads are not mixed with previous upload contexts by default
 
 ## MCP behavior
+
 - Controlled by request field `mcp_enabled`
 - Server config from `MCP_SERVERS_JSON`
 - Only `transport="streamable_http"` configs are accepted
 - If configured but tools unavailable, processing still continues with warnings
 
 ## Environment variables
+
 - `CHROMA_PERSIST_DIR=.chroma`
 - `GROQ_API_KEY=`
 - `GROQ_MODEL=llama-3.1-8b-instant`
@@ -343,12 +407,80 @@ curl -L "http://localhost:8000/api/lkpd/files/lkpd-xxxxxxxx" -o lkpd.pdf
 - `LKPD_HEADER_TITLE_LINE2=SMARTER AI`
 - `LKPD_HEADER_TITLE_LINE3=`
 - `APP_PUBLIC_BASE_URL=http://localhost:8000`
+- `JWT_ENABLED=true|false` (default: true in `APP_ENV=production`, otherwise false)
+- `JWT_SECRET=` (required when `JWT_ENABLED=true`, minimum 32 chars)
+- `JWT_ISSUER=my-backend`
+- `JWT_AUDIENCE=rtm-class-ai`
+- `JWT_CLOCK_SKEW_SECONDS=30`
+- `JWT_REQUIRED_SCOPES={"/api/material":"material:write","/api/lkpd":"lkpd:write","/api/lkpd/files/{file_id}":"lkpd:read"}`
+
+## Authentication (JWT)
+
+- Header format: `Authorization: Bearer <JWT>`
+- Algorithm: `HS256`
+- Required claims:
+  - `iss` must match `JWT_ISSUER`
+  - `aud` must match `JWT_AUDIENCE`
+  - `sub` service identity (example: `service:backend`)
+  - `iat` issued-at timestamp
+  - `exp` expiration timestamp (recommended short lived, default 300s)
+- Optional claim:
+  - `scope` as space-separated scopes
+- Endpoint scopes:
+  - `/api/material` requires `material:write`
+  - `/api/lkpd` requires `lkpd:write`
+  - `/api/lkpd/files/{file_id}` requires `lkpd:read`
+
+Python helper is available at `cmd/jwt_client.py`.
 
 ## Notes
+
 - No public endpoint for polling job status yet
 - Final output delivery is callback-only
 - Callback signature/auth is not implemented yet
 - API error shape uses:
+kpd_jobs:queue`
+- `LKPD_PDF_DIR=.generated/lkpd`
+- `LKPD_PDF_TTL_SECONDS=86400`
+- `LKPD_HEADER_LOGO_PATH=.assets/lkpd/logo.png`
+- `LKPD_HEADER_ACCENT_HEX=#1F4E79`
+- `LKPD_HEADER_TITLE_LINE1=LEMBAR KERJA PESERTA DIDIK (LKPD)`
+- `LKPD_HEADER_TITLE_LINE2=SMARTER AI`
+- `LKPD_HEADER_TITLE_LINE3=`
+- `APP_PUBLIC_BASE_URL=http://localhost:8000`
+- `JWT_ENABLED=true|false` (default: true in `APP_ENV=production`, otherwise false)
+- `JWT_SECRET=` (required when `JWT_ENABLED=true`, minimum 32 chars)
+- `JWT_ISSUER=my-backend`
+- `JWT_AUDIENCE=rtm-class-ai`
+- `JWT_CLOCK_SKEW_SECONDS=30`
+- `JWT_REQUIRED_SCOPES={"/api/material":"material:write","/api/lkpd":"lkpd:write","/api/lkpd/files/{file_id}":"lkpd:read"}`
+
+## Authentication (JWT)
+
+- Header format: `Authorization: Bearer <JWT>`
+- Algorithm: `HS256`
+- Required claims:
+  - `iss` must match `JWT_ISSUER`
+  - `aud` must match `JWT_AUDIENCE`
+  - `sub` service identity (example: `service:backend`)
+  - `iat` issued-at timestamp
+  - `exp` expiration timestamp (recommended short lived, default 300s)
+- Optional claim:
+  - `scope` as space-separated scopes
+- Endpoint scopes:
+  - `/api/material` requires `material:write`
+  - `/api/lkpd` requires `lkpd:write`
+  - `/api/lkpd/files/{file_id}` requires `lkpd:read`
+
+Python helper is available at `cmd/jwt_client.py`.
+
+## Notes
+
+- No public endpoint for polling job status yet
+- Final output delivery is callback-only
+- Callback signature/auth is not implemented yet
+- API error shape uses:
+
 ```json
 { "detail": "..." }
 ```
