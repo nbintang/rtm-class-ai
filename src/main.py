@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
 
-from fastapi import Depends, FastAPI, File, Form, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
+from starlette.responses import Response
 
 from src.agent.callback import WebhookCallbackClient
 from src.agent.jobs import MaterialJobStore
@@ -15,13 +17,17 @@ from src.agent.runtime import AgentRuntime
 from src.agent.types import (
     GenerateType,
     LkpdAsyncSubmitRequest,
-    LkpdSubmitAcceptedResponse,
     MaterialAsyncSubmitRequest,
-    MaterialSubmitAcceptedResponse,
 )
 from src.agent.worker import MaterialJobWorker
 from src.auth import require_jwt
 from src.config import settings
+from src.core.api_response import (
+    ApiSuccessResponse,
+    attach_meta_to_json_response,
+    build_request_id,
+    build_success_payload,
+)
 from src.core.constants import APP_NAME, APP_VERSION
 from src.core.exceptions import ServiceError, register_exception_handlers
 from src.core.logging import configure_logging
@@ -42,6 +48,11 @@ job_worker = MaterialJobWorker(
 )
 
 
+class JobAcceptedData(BaseModel):
+    job_id: str = Field(min_length=1)
+    status: Literal["accepted"] = "accepted"
+
+
 @asynccontextmanager
 async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
     await agent_runtime.initialize()
@@ -59,6 +70,22 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION, lifespan=app_lifespan)
+
+
+@app.middleware("http")
+async def request_id_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    request_id = build_request_id()
+    request.state.request_id = request_id
+
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    if request.url.path.startswith("/api"):
+        return attach_meta_to_json_response(response, request_id)
+    return response
+
+
 register_exception_handlers(app)
 
 material_scopes = list(settings.jwt_required_scopes.get("/api/material", ()))
@@ -70,12 +97,13 @@ lkpd_file_scopes = list(
 
 @app.post(
     "/api/material",
-    response_model=MaterialSubmitAcceptedResponse,
+    response_model=ApiSuccessResponse[JobAcceptedData],
     response_model_exclude_none=True,
     status_code=202,
     dependencies=[Depends(require_jwt(material_scopes))],
 )
 async def webhook_material(
+    http_request: Request,
     user_id: str = Form(...),
     file: UploadFile = File(...),
     callback_url: str = Form(...),
@@ -84,9 +112,9 @@ async def webhook_material(
     essay_count: int = Form(default=settings.default_essay_count),
     summary_max_words: int = Form(default=settings.default_summary_max_words),
     mcp_enabled: bool = Form(default=True),
-) -> MaterialSubmitAcceptedResponse:
+) -> ApiSuccessResponse[JobAcceptedData]:
     try:
-        request = MaterialAsyncSubmitRequest(
+        submit_request = MaterialAsyncSubmitRequest(
             user_id=user_id,
             callback_url=callback_url,
             generate_types=generate_types,
@@ -96,7 +124,11 @@ async def webhook_material(
             mcp_enabled=mcp_enabled,
         )
     except ValidationError as exc:
-        raise ServiceError(str(exc), status_code=422) from exc
+        raise ServiceError(
+            "Request validation failed.",
+            status_code=422,
+            details=exc.errors(),
+        ) from exc
 
     file_bytes = await file.read()
     max_bytes = settings.material_max_file_mb * 1024 * 1024
@@ -111,12 +143,16 @@ async def webhook_material(
     try:
         job_id = await job_store.enqueue_job(
             job_kind="material",
-            request=request,
+            request=submit_request,
             file_bytes=file_bytes,
             filename=filename,
             content_type=file.content_type,
         )
-        return MaterialSubmitAcceptedResponse(job_id=job_id)
+        return build_success_payload(
+            request=http_request,
+            data=JobAcceptedData(job_id=job_id),
+            message="Material queued for async processing.",
+        )
     except Exception as exc:
         logger.exception("Failed to enqueue material job")
         raise ServiceError(f"Failed to enqueue material job: {exc}", status_code=503) from exc
@@ -124,25 +160,30 @@ async def webhook_material(
 
 @app.post(
     "/api/lkpd",
-    response_model=LkpdSubmitAcceptedResponse,
+    response_model=ApiSuccessResponse[JobAcceptedData],
     response_model_exclude_none=True,
     status_code=202,
     dependencies=[Depends(require_jwt(lkpd_scopes))],
 )
 async def webhook_lkpd(
+    http_request: Request,
     user_id: str = Form(...),
     file: UploadFile = File(...),
     callback_url: str = Form(...),
     activity_count: int = Form(default=settings.lkpd_default_activity_count),
-) -> LkpdSubmitAcceptedResponse:
+) -> ApiSuccessResponse[JobAcceptedData]:
     try:
-        request = LkpdAsyncSubmitRequest(
+        submit_request = LkpdAsyncSubmitRequest(
             user_id=user_id,
             callback_url=callback_url,
             activity_count=activity_count,
         )
     except ValidationError as exc:
-        raise ServiceError(str(exc), status_code=422) from exc
+        raise ServiceError(
+            "Request validation failed.",
+            status_code=422,
+            details=exc.errors(),
+        ) from exc
 
     file_bytes = await file.read()
     max_bytes = settings.material_max_file_mb * 1024 * 1024
@@ -156,12 +197,16 @@ async def webhook_lkpd(
     try:
         job_id = await job_store.enqueue_job(
             job_kind="lkpd",
-            request=request,
+            request=submit_request,
             file_bytes=file_bytes,
             filename=filename,
             content_type=file.content_type,
         )
-        return LkpdSubmitAcceptedResponse(job_id=job_id)
+        return build_success_payload(
+            request=http_request,
+            data=JobAcceptedData(job_id=job_id),
+            message="LKPD queued for async processing.",
+        )
     except Exception as exc:
         logger.exception("Failed to enqueue LKPD job")
         raise ServiceError(f"Failed to enqueue LKPD job: {exc}", status_code=503) from exc

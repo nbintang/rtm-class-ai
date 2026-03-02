@@ -116,9 +116,15 @@ Response (`202`):
 
 ```json
 {
-  "job_id": "job-...",
-  "status": "accepted",
-  "message": "Material queued for async processing."
+  "success": true,
+  "data": {
+    "job_id": "job-...",
+    "status": "accepted"
+  },
+  "message": "Material queued for async processing.",
+  "meta": {
+    "request_id": "req-..."
+  }
 }
 ```
 
@@ -135,9 +141,15 @@ Response (`202`):
 
 ```json
 {
-  "job_id": "job-...",
-  "status": "accepted",
-  "message": "LKPD queued for async processing."
+  "success": true,
+  "data": {
+    "job_id": "job-...",
+    "status": "accepted"
+  },
+  "message": "LKPD queued for async processing.",
+  "meta": {
+    "request_id": "req-..."
+  }
 }
 ```
 
@@ -145,6 +157,50 @@ Response (`202`):
 
 - Returns generated LKPD PDF (`application/pdf`)
 - Returns `404` if file is missing or expired
+
+## API Response Format
+
+All non-callback HTTP JSON responses use this envelope.
+
+Success format:
+
+```json
+{
+  "success": true,
+  "data": {},
+  "message": "Optional message",
+  "meta": {
+    "request_id": "req-..."
+  }
+}
+```
+
+Error format:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "machine_readable_code",
+    "message": "Human readable message",
+    "details": null
+  },
+  "meta": {
+    "request_id": "req-..."
+  }
+}
+```
+
+Common error codes:
+
+- `invalid_request` (`400`)
+- `unauthorized` (`401`)
+- `forbidden` (`403`)
+- `not_found` (`404`)
+- `payload_too_large` (`413`)
+- `validation_error` (`422`)
+- `internal_error` (`500`)
+- `service_unavailable` (`503`)
 
 ## Callback contract
 
@@ -438,49 +494,4 @@ Python helper is available at `cmd/jwt_client.py`.
 - No public endpoint for polling job status yet
 - Final output delivery is callback-only
 - Callback signature/auth is not implemented yet
-- API error shape uses:
-kpd_jobs:queue`
-- `LKPD_PDF_DIR=.generated/lkpd`
-- `LKPD_PDF_TTL_SECONDS=86400`
-- `LKPD_HEADER_LOGO_PATH=.assets/lkpd/logo.png`
-- `LKPD_HEADER_ACCENT_HEX=#1F4E79`
-- `LKPD_HEADER_TITLE_LINE1=LEMBAR KERJA PESERTA DIDIK (LKPD)`
-- `LKPD_HEADER_TITLE_LINE2=SMARTER AI`
-- `LKPD_HEADER_TITLE_LINE3=`
-- `APP_PUBLIC_BASE_URL=http://localhost:8000`
-- `JWT_ENABLED=true|false` (default: true in `APP_ENV=production`, otherwise false)
-- `JWT_SECRET=` (required when `JWT_ENABLED=true`, minimum 32 chars)
-- `JWT_ISSUER=my-backend`
-- `JWT_AUDIENCE=rtm-class-ai`
-- `JWT_CLOCK_SKEW_SECONDS=30`
-- `JWT_REQUIRED_SCOPES={"/api/material":"material:write","/api/lkpd":"lkpd:write","/api/lkpd/files/{file_id}":"lkpd:read"}`
-
-## Authentication (JWT)
-
-- Header format: `Authorization: Bearer <JWT>`
-- Algorithm: `HS256`
-- Required claims:
-  - `iss` must match `JWT_ISSUER`
-  - `aud` must match `JWT_AUDIENCE`
-  - `sub` service identity (example: `service:backend`)
-  - `iat` issued-at timestamp
-  - `exp` expiration timestamp (recommended short lived, default 300s)
-- Optional claim:
-  - `scope` as space-separated scopes
-- Endpoint scopes:
-  - `/api/material` requires `material:write`
-  - `/api/lkpd` requires `lkpd:write`
-  - `/api/lkpd/files/{file_id}` requires `lkpd:read`
-
-Python helper is available at `cmd/jwt_client.py`.
-
-## Notes
-
-- No public endpoint for polling job status yet
-- Final output delivery is callback-only
-- Callback signature/auth is not implemented yet
-- API error shape uses:
-
-```json
-{ "detail": "..." }
-```
+- Callback payload contract is unchanged by API response envelopes
