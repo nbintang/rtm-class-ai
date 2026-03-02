@@ -1,4 +1,5 @@
 import os
+import json
 from typing import Iterable
 
 from dotenv import load_dotenv
@@ -39,6 +40,52 @@ def _parse_hex_color(raw: str, default: str) -> str:
     return value.upper()
 
 
+def _parse_bool(raw: str | None, default: bool) -> bool:
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_scope_string(raw: str) -> tuple[str, ...]:
+    return tuple(part for part in raw.split(" ") if part)
+
+
+def _parse_required_scopes(
+    raw: str, default: dict[str, tuple[str, ...]]
+) -> dict[str, tuple[str, ...]]:
+    value = (raw or "").strip()
+    if not value:
+        return default
+
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return default
+
+    if not isinstance(parsed, dict):
+        return default
+
+    out: dict[str, tuple[str, ...]] = {}
+    for key, item in parsed.items():
+        if not isinstance(key, str):
+            continue
+        if isinstance(item, str):
+            out[key] = _parse_scope_string(item)
+            continue
+        if isinstance(item, list):
+            out[key] = tuple(part for part in item if isinstance(part, str) and part)
+            continue
+
+    return out or default
+
+
+DEFAULT_JWT_REQUIRED_SCOPES: dict[str, tuple[str, ...]] = {
+    "/api/material": ("material:write",),
+    "/api/lkpd": ("lkpd:write",),
+    "/api/lkpd/files/{file_id}": ("lkpd:read",),
+}
+
+
 class Settings(BaseModel):
     chroma_persist_dir: str = ".chroma"
     groq_api_key: str = ""
@@ -76,10 +123,24 @@ class Settings(BaseModel):
     lkpd_header_title_line2: str = "SMARTER AI"
     lkpd_header_title_line3: str = ""
     app_public_base_url: str = "http://localhost:8000"
+    jwt_enabled: bool = True
+    jwt_secret: str = ""
+    jwt_issuer: str = "my-backend"
+    jwt_audience: str = "rtm-class-ai"
+    jwt_clock_skew_seconds: int = 30
+    jwt_required_scopes: dict[str, tuple[str, ...]] = DEFAULT_JWT_REQUIRED_SCOPES
 
 
 def get_settings() -> Settings:
     load_dotenv()
+    app_env = os.getenv("APP_ENV", os.getenv("ENV", "")).strip().lower()
+    default_jwt_enabled = app_env in {"prod", "production"}
+    jwt_enabled = _parse_bool(os.getenv("JWT_ENABLED"), default=default_jwt_enabled)
+    jwt_secret = os.getenv("JWT_SECRET", "")
+
+    if jwt_enabled and len(jwt_secret) < 32:
+        raise ValueError("JWT_SECRET must be at least 32 characters when JWT is enabled.")
+
     return Settings(
         chroma_persist_dir=os.getenv("CHROMA_PERSIST_DIR", ".chroma"),
         groq_api_key=os.getenv("GROQ_API_KEY", ""),
@@ -133,6 +194,15 @@ def get_settings() -> Settings:
         ),
         lkpd_header_title_line3=os.getenv("LKPD_HEADER_TITLE_LINE3", ""),
         app_public_base_url=os.getenv("APP_PUBLIC_BASE_URL", "http://localhost:8000"),
+        jwt_enabled=jwt_enabled,
+        jwt_secret=jwt_secret,
+        jwt_issuer=os.getenv("JWT_ISSUER", "my-backend"),
+        jwt_audience=os.getenv("JWT_AUDIENCE", "rtm-class-ai"),
+        jwt_clock_skew_seconds=int(os.getenv("JWT_CLOCK_SKEW_SECONDS", "30")),
+        jwt_required_scopes=_parse_required_scopes(
+            os.getenv("JWT_REQUIRED_SCOPES", ""),
+            default=DEFAULT_JWT_REQUIRED_SCOPES,
+        ),
     )
 
 
