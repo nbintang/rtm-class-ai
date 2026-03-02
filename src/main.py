@@ -4,7 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import Depends, FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
@@ -20,6 +20,7 @@ from src.agent.types import (
     MaterialSubmitAcceptedResponse,
 )
 from src.agent.worker import MaterialJobWorker
+from src.auth import require_jwt
 from src.config import settings
 from src.core.constants import APP_NAME, APP_VERSION
 from src.core.exceptions import ServiceError, register_exception_handlers
@@ -60,12 +61,19 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title=APP_NAME, version=APP_VERSION, lifespan=app_lifespan)
 register_exception_handlers(app)
 
+material_scopes = list(settings.jwt_required_scopes.get("/api/material", ()))
+lkpd_scopes = list(settings.jwt_required_scopes.get("/api/lkpd", ()))
+lkpd_file_scopes = list(
+    settings.jwt_required_scopes.get("/api/lkpd/files/{file_id}", ())
+)
+
 
 @app.post(
     "/api/material",
     response_model=MaterialSubmitAcceptedResponse,
     response_model_exclude_none=True,
     status_code=202,
+    dependencies=[Depends(require_jwt(material_scopes))],
 )
 async def webhook_material(
     user_id: str = Form(...),
@@ -119,6 +127,7 @@ async def webhook_material(
     response_model=LkpdSubmitAcceptedResponse,
     response_model_exclude_none=True,
     status_code=202,
+    dependencies=[Depends(require_jwt(lkpd_scopes))],
 )
 async def webhook_lkpd(
     user_id: str = Form(...),
@@ -158,7 +167,10 @@ async def webhook_lkpd(
         raise ServiceError(f"Failed to enqueue LKPD job: {exc}", status_code=503) from exc
 
 
-@app.get("/api/lkpd/files/{file_id}")
+@app.get(
+    "/api/lkpd/files/{file_id}",
+    dependencies=[Depends(require_jwt(lkpd_file_scopes))],
+)
 async def get_lkpd_file(file_id: str) -> FileResponse:
     path = lkpd_storage.get_pdf_path(file_id)
     if path is None:
