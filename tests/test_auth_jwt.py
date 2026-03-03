@@ -16,7 +16,7 @@ def _build_token(
     secret: str,
     iss: str,
     aud: str,
-    sub: str = "service:backend",
+    sub: str = "client:test-client",
     expires_in_seconds: int = 300,
     scope: str = "material:write lkpd:write lkpd:read",
 ) -> str:
@@ -38,6 +38,7 @@ def _set_jwt_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "jwt_issuer", "my-backend")
     monkeypatch.setattr(settings, "jwt_audience", "rtm-class-ai")
     monkeypatch.setattr(settings, "jwt_clock_skew_seconds", 0)
+    monkeypatch.setattr(settings, "jwt_denylist_enabled", False)
 
 
 def test_decode_and_verify_jwt_valid_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,7 +53,7 @@ def test_decode_and_verify_jwt_valid_token(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert payload["iss"] == settings.jwt_issuer
     assert payload["aud"] == settings.jwt_audience
-    assert payload["sub"] == "service:backend"
+    assert payload["sub"] == "client:test-client"
 
 
 def test_decode_and_verify_jwt_wrong_issuer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -116,3 +117,20 @@ def test_require_jwt_missing_scope(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "Insufficient scope."
+
+
+def test_require_jwt_invalid_subject(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_jwt_settings(monkeypatch)
+    token = _build_token(
+        secret=settings.jwt_secret,
+        iss=settings.jwt_issuer,
+        aud=settings.jwt_audience,
+        sub="service:backend",
+    )
+    dependency = require_jwt(["material:write"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(dependency(authorization=f"Bearer {token}"))
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Invalid token subject."
