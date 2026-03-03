@@ -42,6 +42,7 @@ ERROR_CODE_BY_STATUS: dict[int, str] = {
     403: "forbidden",
     404: "not_found",
     413: "payload_too_large",
+    429: "too_many_requests",
     422: "validation_error",
     500: "internal_error",
     503: "service_unavailable",
