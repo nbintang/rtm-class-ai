@@ -47,7 +47,7 @@ def _parse_bool(raw: str | None, default: bool) -> bool:
 
 
 def _parse_scope_string(raw: str) -> tuple[str, ...]:
-    return tuple(part for part in raw.split(" ") if part)
+    return tuple(part for part in raw.split() if part)
 
 
 def _parse_required_scopes(
@@ -81,9 +81,13 @@ def _parse_required_scopes(
 
 DEFAULT_JWT_REQUIRED_SCOPES: dict[str, tuple[str, ...]] = {
     "/api/material": ("material:write",),
+    "/api/mcq": ("material:write",),
+    "/api/essay": ("material:write",),
+    "/api/summary": ("material:write",),
     "/api/lkpd": ("lkpd:write",),
     "/api/lkpd/files/{file_id}": ("lkpd:read",),
 }
+DEFAULT_OAUTH_SCOPES: tuple[str, ...] = ("material:write", "lkpd:write", "lkpd:read")
 
 
 class Settings(BaseModel):
@@ -129,17 +133,57 @@ class Settings(BaseModel):
     jwt_audience: str = "rtm-class-ai"
     jwt_clock_skew_seconds: int = 30
     jwt_required_scopes: dict[str, tuple[str, ...]] = DEFAULT_JWT_REQUIRED_SCOPES
+    oauth_enabled: bool = False
+    oauth_client_id: str = ""
+    oauth_client_secret: str = ""
+    oauth_allowed_scopes: tuple[str, ...] = DEFAULT_OAUTH_SCOPES
+    oauth_default_scopes: tuple[str, ...] = DEFAULT_OAUTH_SCOPES
+    oauth_token_ttl_seconds: int = 300
+    oauth_token_rate_limit_window_seconds: int = 60
+    oauth_token_rate_limit_per_ip: int = 30
+    oauth_token_rate_limit_per_client: int = 30
+    jwt_denylist_enabled: bool = True
+    jwt_denylist_prefix: str = "auth:denylist:jti:"
 
 
 def get_settings() -> Settings:
     load_dotenv()
     app_env = os.getenv("APP_ENV", os.getenv("ENV", "")).strip().lower()
     default_jwt_enabled = app_env in {"prod", "production"}
+    default_oauth_enabled = app_env in {"prod", "production"}
     jwt_enabled = _parse_bool(os.getenv("JWT_ENABLED"), default=default_jwt_enabled)
+    oauth_enabled = _parse_bool(
+        os.getenv("OAUTH_ENABLED"),
+        default=default_oauth_enabled,
+    )
     jwt_secret = os.getenv("JWT_SECRET", "")
+    oauth_client_id = os.getenv("OAUTH_CLIENT_ID", "").strip()
+    oauth_client_secret = os.getenv("OAUTH_CLIENT_SECRET", "")
+    oauth_allowed_scopes = _parse_scope_string(
+        os.getenv("OAUTH_ALLOWED_SCOPES", " ".join(DEFAULT_OAUTH_SCOPES))
+    )
+    oauth_default_scopes = _parse_scope_string(
+        os.getenv("OAUTH_DEFAULT_SCOPES", " ".join(DEFAULT_OAUTH_SCOPES))
+    )
 
-    if jwt_enabled and len(jwt_secret) < 32:
-        raise ValueError("JWT_SECRET must be at least 32 characters when JWT is enabled.")
+    if not oauth_allowed_scopes:
+        oauth_allowed_scopes = DEFAULT_OAUTH_SCOPES
+    if not oauth_default_scopes:
+        oauth_default_scopes = oauth_allowed_scopes
+
+    if not set(oauth_default_scopes).issubset(set(oauth_allowed_scopes)):
+        raise ValueError("OAUTH_DEFAULT_SCOPES must be a subset of OAUTH_ALLOWED_SCOPES.")
+
+    if (jwt_enabled or oauth_enabled) and len(jwt_secret) < 32:
+        raise ValueError(
+            "JWT_SECRET must be at least 32 characters when JWT or OAuth is enabled."
+        )
+
+    if oauth_enabled:
+        if not oauth_client_id:
+            raise ValueError("OAUTH_CLIENT_ID is required when OAuth is enabled.")
+        if not oauth_client_secret:
+            raise ValueError("OAUTH_CLIENT_SECRET is required when OAuth is enabled.")
 
     return Settings(
         chroma_persist_dir=os.getenv("CHROMA_PERSIST_DIR", ".chroma"),
@@ -203,6 +247,26 @@ def get_settings() -> Settings:
             os.getenv("JWT_REQUIRED_SCOPES", ""),
             default=DEFAULT_JWT_REQUIRED_SCOPES,
         ),
+        oauth_enabled=oauth_enabled,
+        oauth_client_id=oauth_client_id,
+        oauth_client_secret=oauth_client_secret,
+        oauth_allowed_scopes=oauth_allowed_scopes,
+        oauth_default_scopes=oauth_default_scopes,
+        oauth_token_ttl_seconds=int(os.getenv("OAUTH_TOKEN_TTL_SECONDS", "300")),
+        oauth_token_rate_limit_window_seconds=int(
+            os.getenv("OAUTH_TOKEN_RATE_LIMIT_WINDOW_SECONDS", "60")
+        ),
+        oauth_token_rate_limit_per_ip=int(
+            os.getenv("OAUTH_TOKEN_RATE_LIMIT_PER_IP", "30")
+        ),
+        oauth_token_rate_limit_per_client=int(
+            os.getenv("OAUTH_TOKEN_RATE_LIMIT_PER_CLIENT", "30")
+        ),
+        jwt_denylist_enabled=_parse_bool(
+            os.getenv("JWT_DENYLIST_ENABLED"),
+            default=True,
+        ),
+        jwt_denylist_prefix=os.getenv("JWT_DENYLIST_PREFIX", "auth:denylist:jti:"),
     )
 
 
