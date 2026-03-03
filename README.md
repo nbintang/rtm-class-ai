@@ -5,6 +5,9 @@ Standalone FastAPI microservice for async material generation and LKPD generatio
 ## What this service does
 
 - Accepts file uploads for:
+  - `POST /api/mcq` (generate MCQ only)
+  - `POST /api/essay` (generate Essay only)
+  - `POST /api/summary` (generate Summary only)
   - `POST /api/material` (generate `mcq`, `essay`, `summary`)
   - `POST /api/lkpd` (generate LKPD + downloadable PDF)
 - Immediately returns `202 Accepted` with `job_id`
@@ -18,6 +21,15 @@ Standalone FastAPI microservice for async material generation and LKPD generatio
 3. Worker pulls queue, extracts text (`.pdf`, `.pptx`, `.txt`), indexes RAG, calls model.
 4. Worker sends callback payload (retry with backoff if callback fails).
 5. LKPD flow also renders a PDF and exposes a temporary download URL.
+
+## API module structure
+
+- `src/main.py` initializes app lifespan/middleware and registers routers.
+- `src/api/material_routes.py` handles `/api/material`, `/api/mcq`, `/api/essay`, `/api/summary`.
+- `src/api/lkpd_routes.py` handles `/api/lkpd` and `/api/lkpd/files/{file_id}`.
+- `src/api/oauth_routes.py` handles `/api/oauth/token`.
+- `src/api/job_submission.py` centralizes shared request validation and enqueue flow.
+- `src/api/schemas.py` centralizes API response DTOs.
 
 ## Tech stack
 
@@ -92,14 +104,139 @@ uv run task ps
 
 ## HTTP API
 
-All API endpoints in this section are intended for service-to-service usage.  
-When JWT auth is enabled, requests must include:
+All API endpoints in this section are intended for service-to-service usage.
+Clients do not generate JWT locally. Use OAuth client credentials to get an access token first.
 
-- `Authorization: Bearer <JWT>`
-- `iss`, `aud`, `sub`, `iat`, `exp` claims
-- Endpoint scope in `scope` claim
+### `POST /api/oauth/token`
 
-### `POST /api/material`
+Request body must be `application/x-www-form-urlencoded`:
+
+- `grant_type=client_credentials` (required)
+- `client_id` (required)
+- `client_secret` (required)
+- `scope` (optional, space-separated; defaults to `OAUTH_DEFAULT_SCOPES`)
+
+This endpoint is public and rate-limited per IP and per `client_id`.
+
+Success response (`200`):
+
+```json
+{
+  "success": true,
+  "data": {
+    "access_token": "<JWT>",
+    "token_type": "Bearer",
+    "expires_in": 300,
+    "scope": "material:write lkpd:write lkpd:read"
+  },
+  "message": "Access token issued.",
+  "meta": {
+    "request_id": "req-..."
+  }
+}
+```
+
+The token is signed by server-side `JWT_SECRET` and includes:
+- `iss`, `aud`, `sub=client:<client_id>`, `iat`, `exp`, `scope`, `jti`
+
+Error response format follows the same global API envelope (`success=false`, `error`, `meta`), for example:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "invalid_request",
+    "message": "grant_type, client_id, and client_secret are required.",
+    "details": {
+      "error": "invalid_request",
+      "error_description": "grant_type, client_id, and client_secret are required."
+    }
+  },
+  "meta": {
+    "request_id": "req-..."
+  }
+}
+```
+
+### `POST /api/mcq`
+
+Multipart form fields:
+
+- `user_id` (required, non-empty)
+- `file` (required, one file: `.pdf`, `.pptx`, `.txt`)
+- `callback_url` (required, valid `http/https`)
+- `mcq_count` (optional, default `10`, range `1..20`)
+- `mcp_enabled` (optional, default `true`)
+
+Response (`202`):
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job-...",
+    "status": "accepted"
+  },
+  "message": "MCQ queued for async processing.",
+  "meta": {
+    "request_id": "req-..."
+  }
+}
+```
+
+### `POST /api/essay`
+
+Multipart form fields:
+
+- `user_id` (required, non-empty)
+- `file` (required, one file: `.pdf`, `.pptx`, `.txt`)
+- `callback_url` (required, valid `http/https`)
+- `essay_count` (optional, default `3`, range `1..10`)
+- `mcp_enabled` (optional, default `true`)
+
+Response (`202`):
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job-...",
+    "status": "accepted"
+  },
+  "message": "Essay queued for async processing.",
+  "meta": {
+    "request_id": "req-..."
+  }
+}
+```
+
+### `POST /api/summary`
+
+Multipart form fields:
+
+- `user_id` (required, non-empty)
+- `file` (required, one file: `.pdf`, `.pptx`, `.txt`)
+- `callback_url` (required, valid `http/https`)
+- `summary_max_words` (optional, default `200`, range `80..400`)
+- `mcp_enabled` (optional, default `true`)
+
+Response (`202`):
+
+```json
+{
+  "success": true,
+  "data": {
+    "job_id": "job-...",
+    "status": "accepted"
+  },
+  "message": "Summary queued for async processing.",
+  "meta": {
+    "request_id": "req-..."
+  }
+}
+```
+
+### `POST /api/material` (legacy, still supported)
 
 Multipart form fields:
 
@@ -198,6 +335,7 @@ Common error codes:
 - `forbidden` (`403`)
 - `not_found` (`404`)
 - `payload_too_large` (`413`)
+- `too_many_requests` (`429`)
 - `validation_error` (`422`)
 - `internal_error` (`500`)
 - `service_unavailable` (`503`)
@@ -348,22 +486,56 @@ Failed processing example:
 
 ## Example curl
 
-Generate JWT (Python helper):
+Get access token:
 
 ```bash
-python cmd/jwt_client.py token \
-  --secret "$JWT_SECRET" \
-  --issuer "$JWT_ISSUER" \
-  --audience "$JWT_AUDIENCE" \
-  --subject "service:backend" \
-  --scope "material:write lkpd:write lkpd:read"
+TOKEN=$(curl -s -X POST http://localhost:8000/api/oauth/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=$OAUTH_CLIENT_ID" \
+  -d "client_secret=$OAUTH_CLIENT_SECRET" \
+  -d "scope=material:write lkpd:write lkpd:read" | python -c "import sys,json; print(json.load(sys.stdin)['data']['access_token'])")
 ```
 
-Submit material job:
+Submit MCQ job:
 
 ```bash
-TOKEN=$(python cmd/jwt_client.py token --secret "$JWT_SECRET")
+curl -X POST http://localhost:8000/api/mcq \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "user_id=user-1" \
+  -F "callback_url=https://example.com/hooks/mcq" \
+  -F "mcq_count=10" \
+  -F "mcp_enabled=true" \
+  -F "file=@./materi.pdf"
+```
 
+Submit Essay job:
+
+```bash
+curl -X POST http://localhost:8000/api/essay \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "user_id=user-1" \
+  -F "callback_url=https://example.com/hooks/essay" \
+  -F "essay_count=3" \
+  -F "mcp_enabled=true" \
+  -F "file=@./materi.pdf"
+```
+
+Submit Summary job:
+
+```bash
+curl -X POST http://localhost:8000/api/summary \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "user_id=user-1" \
+  -F "callback_url=https://example.com/hooks/summary" \
+  -F "summary_max_words=200" \
+  -F "mcp_enabled=true" \
+  -F "file=@./materi.pdf"
+```
+
+Submit legacy material job (multiple generate types in one request):
+
+```bash
 curl -X POST http://localhost:8000/api/material \
   -H "Authorization: Bearer $TOKEN" \
   -F "user_id=user-1" \
@@ -381,8 +553,6 @@ curl -X POST http://localhost:8000/api/material \
 Submit LKPD job:
 
 ```bash
-TOKEN=$(python cmd/jwt_client.py token --secret "$JWT_SECRET")
-
 curl -X POST http://localhost:8000/api/lkpd \
   -H "Authorization: Bearer $TOKEN" \
   -F "user_id=user-1" \
@@ -394,8 +564,6 @@ curl -X POST http://localhost:8000/api/lkpd \
 Download LKPD PDF:
 
 ```bash
-TOKEN=$(python cmd/jwt_client.py token --secret "$JWT_SECRET")
-
 curl -L "http://localhost:8000/api/lkpd/files/lkpd-xxxxxxxx" \
   -H "Authorization: Bearer $TOKEN" \
   -o lkpd.pdf
@@ -464,30 +632,43 @@ curl -L "http://localhost:8000/api/lkpd/files/lkpd-xxxxxxxx" \
 - `LKPD_HEADER_TITLE_LINE3=`
 - `APP_PUBLIC_BASE_URL=http://localhost:8000`
 - `JWT_ENABLED=true|false` (default: true in `APP_ENV=production`, otherwise false)
-- `JWT_SECRET=` (required when `JWT_ENABLED=true`, minimum 32 chars)
+- `JWT_SECRET=` (required when `JWT_ENABLED=true` or `OAUTH_ENABLED=true`, minimum 32 chars)
 - `JWT_ISSUER=my-backend`
 - `JWT_AUDIENCE=rtm-class-ai`
 - `JWT_CLOCK_SKEW_SECONDS=30`
-- `JWT_REQUIRED_SCOPES={"/api/material":"material:write","/api/lkpd":"lkpd:write","/api/lkpd/files/{file_id}":"lkpd:read"}`
+- `JWT_REQUIRED_SCOPES={"/api/material":"material:write","/api/mcq":"material:write","/api/essay":"material:write","/api/summary":"material:write","/api/lkpd":"lkpd:write","/api/lkpd/files/{file_id}":"lkpd:read"}`
+- `JWT_DENYLIST_ENABLED=true|false` (default: true)
+- `JWT_DENYLIST_PREFIX=auth:denylist:jti:`
+- `OAUTH_ENABLED=true|false` (default: true in `APP_ENV=production`, otherwise false)
+- `OAUTH_CLIENT_ID=rtm-client`
+- `OAUTH_CLIENT_SECRET=...` (required when `OAUTH_ENABLED=true`)
+- `OAUTH_ALLOWED_SCOPES=material:write lkpd:write lkpd:read`
+- `OAUTH_DEFAULT_SCOPES=material:write lkpd:write lkpd:read`
+- `OAUTH_TOKEN_TTL_SECONDS=300`
+- `OAUTH_TOKEN_RATE_LIMIT_WINDOW_SECONDS=60`
+- `OAUTH_TOKEN_RATE_LIMIT_PER_IP=30`
+- `OAUTH_TOKEN_RATE_LIMIT_PER_CLIENT=30`
 
 ## Authentication (JWT)
 
-- Header format: `Authorization: Bearer <JWT>`
-- Algorithm: `HS256`
-- Required claims:
+- Clients authenticate to `POST /api/oauth/token` using `client_id` + `client_secret`.
+- `JWT_SECRET` is server-only and must never be distributed to clients.
+- API header format remains `Authorization: Bearer <access_token>`.
+- JWT algorithm: `HS256`.
+- Required JWT claims validated on `/api/*` routes:
   - `iss` must match `JWT_ISSUER`
   - `aud` must match `JWT_AUDIENCE`
-  - `sub` service identity (example: `service:backend`)
-  - `iat` issued-at timestamp
-  - `exp` expiration timestamp (recommended short lived, default 300s)
-- Optional claim:
-  - `scope` as space-separated scopes
+  - `sub` must start with `client:`
+  - `iat` and `exp`
+- `scope` claim remains space-separated and enforced per endpoint.
+- `jti` is issued on each token and checked against Redis denylist when enabled.
 - Endpoint scopes:
+  - `/api/mcq` requires `material:write`
+  - `/api/essay` requires `material:write`
+  - `/api/summary` requires `material:write`
   - `/api/material` requires `material:write`
   - `/api/lkpd` requires `lkpd:write`
   - `/api/lkpd/files/{file_id}` requires `lkpd:read`
-
-Python helper is available at `cmd/jwt_client.py`.
 
 ## Notes
 
