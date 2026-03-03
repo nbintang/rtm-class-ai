@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import hmac
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 from typing import Any, Annotated
 
 import jwt
 from fastapi import Header, HTTPException, status
 from jwt import InvalidTokenError
 
+from src.auth.revocation import is_token_revoked
 from src.config import settings
 
 
@@ -46,6 +50,36 @@ def _extract_scope_set(payload: dict[str, Any]) -> set[str]:
     return set()
 
 
+def _normalize_scopes(scopes: Iterable[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for scope in scopes:
+        value = scope.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return tuple(normalized)
+
+
+def _ensure_client_subject(payload: dict[str, Any]) -> None:
+    subject = payload.get("sub")
+    if not isinstance(subject, str):
+        raise _unauthorized("Invalid token subject.")
+
+    if not subject.startswith("client:") or len(subject) <= len("client:"):
+        raise _unauthorized("Invalid token subject.")
+
+
+@dataclass(frozen=True)
+class IssuedAccessToken:
+    access_token: str
+    token_type: str
+    expires_in: int
+    scope: str
+    jti: str
+
+
 def decode_and_verify_jwt(token: str) -> dict[str, Any]:
     try:
         payload = jwt.decode(
@@ -75,6 +109,30 @@ def decode_and_verify_jwt(token: str) -> dict[str, Any]:
     return payload
 
 
+def issue_client_access_token(client_id: str, scopes: Iterable[str]) -> IssuedAccessToken:
+    now = datetime.now(UTC)
+    expires_in = max(1, settings.oauth_token_ttl_seconds)
+    normalized_scopes = _normalize_scopes(scopes)
+    jti = uuid4().hex
+    payload = {
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+        "sub": f"client:{client_id}",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=expires_in)).timestamp()),
+        "scope": " ".join(normalized_scopes),
+        "jti": jti,
+    }
+    token = jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+    return IssuedAccessToken(
+        access_token=token,
+        token_type="Bearer",
+        expires_in=expires_in,
+        scope=payload["scope"],
+        jti=jti,
+    )
+
+
 def require_jwt(required_scopes: list[str] | None = None) -> Callable[..., dict[str, Any]]:
     async def dependency(
         authorization: Annotated[str | None, Header(alias="Authorization")] = None,
@@ -84,6 +142,11 @@ def require_jwt(required_scopes: list[str] | None = None) -> Callable[..., dict[
 
         token = _extract_bearer_token(authorization)
         payload = decode_and_verify_jwt(token)
+        _ensure_client_subject(payload)
+
+        jti = payload.get("jti")
+        if isinstance(jti, str) and jti and await is_token_revoked(jti):
+            raise _unauthorized("Token has been revoked.")
 
         needed = set(required_scopes or [])
         if not needed:
