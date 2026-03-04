@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import json
+import re
 from typing import Any
 
 from src.agent.types import LkpdGeneratedPayload, MaterialGeneratedPayload, ToolCallLog
@@ -11,9 +13,8 @@ def try_parse_generated_payload(reply: str) -> MaterialGeneratedPayload | None:
     if not candidate:
         return None
 
-    try:
-        raw = json.loads(candidate)
-    except json.JSONDecodeError:
+    raw = _load_json_lenient(candidate)
+    if raw is None:
         return None
 
     try:
@@ -27,9 +28,8 @@ def try_parse_lkpd_payload(reply: str) -> LkpdGeneratedPayload | None:
     if not candidate:
         return None
 
-    try:
-        raw = json.loads(candidate)
-    except json.JSONDecodeError:
+    raw = _load_json_lenient(candidate)
+    if raw is None:
         return None
 
     try:
@@ -131,4 +131,51 @@ def dedupe_warnings(warnings: list[str]) -> list[str]:
         seen.add(clean)
         deduped.append(clean)
     return deduped
+
+
+def _load_json_lenient(candidate: str) -> dict[str, Any] | None:
+    normalized = _normalize_json_candidate(candidate)
+    for attempt in _json_parse_attempts(normalized):
+        try:
+            raw = json.loads(attempt)
+            if isinstance(raw, dict):
+                return raw
+        except json.JSONDecodeError:
+            continue
+
+    python_like = _js_literal_to_python(normalized)
+    for attempt in _json_parse_attempts(python_like):
+        try:
+            raw = ast.literal_eval(attempt)
+            if isinstance(raw, dict):
+                return raw
+        except (SyntaxError, ValueError):
+            continue
+
+    return None
+
+
+def _normalize_json_candidate(text: str) -> str:
+    cleaned = text.strip().lstrip("\ufeff")
+    replacements = {
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2018": "'",
+        "\u2019": "'",
+    }
+    for old, new in replacements.items():
+        cleaned = cleaned.replace(old, new)
+    return cleaned
+
+
+def _json_parse_attempts(text: str) -> tuple[str, ...]:
+    no_trailing_commas = re.sub(r",(\s*[}\]])", r"\1", text)
+    return (text, no_trailing_commas)
+
+
+def _js_literal_to_python(text: str) -> str:
+    out = re.sub(r"\btrue\b", "True", text)
+    out = re.sub(r"\bfalse\b", "False", out)
+    out = re.sub(r"\bnull\b", "None", out)
+    return out
 

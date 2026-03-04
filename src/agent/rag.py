@@ -201,7 +201,10 @@ class MaterialRAGStore:
         if not queries:
             return [], warnings
 
-        where = {"user_id": user_id, "document_id": document_id}
+        where = self._build_retrieval_filter(
+            user_id=user_id,
+            document_id=document_id,
+        )
 
         if self._vectorstore is None:
             docs = self._fallback_retrieve(
@@ -242,6 +245,16 @@ class MaterialRAGStore:
                 queries=queries,
             )
             return docs, warnings
+
+    @staticmethod
+    def _build_retrieval_filter(*, user_id: str, document_id: str) -> dict:
+        # Chroma where syntax expects a single top-level operator for multi-condition filters.
+        return {
+            "$and": [
+                {"user_id": user_id},
+                {"document_id": document_id},
+            ]
+        }
 
     def new_document_id(self) -> str:
         return f"doc-{uuid4().hex}"
