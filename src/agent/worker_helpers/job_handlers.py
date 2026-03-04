@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from src.agent.jobs import MaterialJobStore
@@ -19,6 +20,8 @@ from src.agent.types import (
     QueuedJob,
 )
 from src.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 async def process_material_job(
@@ -54,6 +57,7 @@ async def process_material_job(
         )
         return callback_payload
     except Exception as exc:
+        logger.exception("Material processing failed for job %s", job.job_id)
         callback_payload = MaterialWebhookResultPayload(
             job_id=job.job_id,
             status="failed_processing",
@@ -124,6 +128,7 @@ async def process_lkpd_job(
         )
         return callback_payload
     except Exception as exc:
+        logger.exception("LKPD processing failed for job %s", job.job_id)
         callback_payload = LkpdWebhookResultPayload(
             job_id=job.job_id,
             status="failed_processing",

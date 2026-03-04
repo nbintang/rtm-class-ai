@@ -99,7 +99,6 @@ class MaterialJobWorker:
             await self._job_store.update_job(
                 job.job_id,
                 status="failed_delivery",
-                last_error="Callback delivery failed after max retries.",
             )
 
     async def _process_lkpd_job(self, job: QueuedJob) -> None:
@@ -114,7 +113,6 @@ class MaterialJobWorker:
             await self._job_store.update_job(
                 job.job_id,
                 status="failed_delivery",
-                last_error="Callback delivery failed after max retries.",
             )
 
     async def _deliver_with_retry(self, *, job: QueuedJob, payload: object) -> bool:
