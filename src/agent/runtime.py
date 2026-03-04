@@ -146,13 +146,15 @@ class AgentRuntime:
         parsed = self._try_parse_generated_payload(reply)
         if parsed is None:
             logger.warning(
-                "model_output_validation_failed stage=initial_parse user_id=%s",
+                "model_output_validation_failed stage=initial_parse user_id=%s reply_preview=%s",
                 request.user_id,
+                self._preview_text(reply),
             )
             warnings.append("model_output_validation_failed:initial_parse")
             retry_prompt = (
                 f"{prompt}\n\n"
-                "Your previous answer was invalid. Return only valid JSON that matches the required schema."
+                "Your previous answer was invalid. Return only valid JSON that matches the required schema.\n\n"
+                f"Invalid answer to repair:\n{reply}"
             )
             retry_result = await agent.ainvoke(
                 {"messages": [{"role": "user", "content": retry_prompt}]},
@@ -163,8 +165,9 @@ class AgentRuntime:
 
         if parsed is None:
             logger.error(
-                "model_output_validation_failed stage=repair_parse user_id=%s",
+                "model_output_validation_failed stage=repair_parse user_id=%s reply_preview=%s",
                 request.user_id,
+                self._preview_text(retry_reply if "retry_reply" in locals() else reply),
             )
             raise MaterialValidationError(
                 "Model failed to produce valid JSON output after one retry."
@@ -459,6 +462,13 @@ class AgentRuntime:
     @staticmethod
     def _dedupe_warnings(warnings: list[str]) -> list[str]:
         return dedupe_warnings(warnings)
+
+    @staticmethod
+    def _preview_text(text: str, *, limit: int = 320) -> str:
+        compact = " ".join(text.split())
+        if len(compact) <= limit:
+            return compact
+        return f"{compact[: limit - 3]}..."
 
 
 __all__ = [
