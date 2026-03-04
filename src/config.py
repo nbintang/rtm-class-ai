@@ -50,6 +50,11 @@ def _parse_scope_string(raw: str) -> tuple[str, ...]:
     return tuple(part for part in raw.split() if part)
 
 
+def _parse_csv_tuple(raw: str, default: Iterable[str]) -> tuple[str, ...]:
+    cleaned = tuple(part.strip() for part in raw.split(",") if part.strip())
+    return cleaned or tuple(default)
+
+
 def _parse_required_scopes(
     raw: str, default: dict[str, tuple[str, ...]]
 ) -> dict[str, tuple[str, ...]]:
@@ -142,6 +147,11 @@ class Settings(BaseModel):
     oauth_token_rate_limit_window_seconds: int = 60
     oauth_token_rate_limit_per_ip: int = 30
     oauth_token_rate_limit_per_client: int = 30
+    cors_enabled: bool = True
+    cors_allow_origins: tuple[str, ...] = ("*",)
+    cors_allow_methods: tuple[str, ...] = ("*",)
+    cors_allow_headers: tuple[str, ...] = ("*",)
+    cors_allow_credentials: bool = False
     jwt_denylist_enabled: bool = True
     jwt_denylist_prefix: str = "auth:denylist:jti:"
 
@@ -184,6 +194,27 @@ def get_settings() -> Settings:
             raise ValueError("OAUTH_CLIENT_ID is required when OAuth is enabled.")
         if not oauth_client_secret:
             raise ValueError("OAUTH_CLIENT_SECRET is required when OAuth is enabled.")
+
+    cors_allow_origins = _parse_csv_tuple(
+        os.getenv("CORS_ALLOW_ORIGINS", "*"),
+        default=("*",),
+    )
+    cors_allow_methods = _parse_csv_tuple(
+        os.getenv("CORS_ALLOW_METHODS", "*"),
+        default=("*",),
+    )
+    cors_allow_headers = _parse_csv_tuple(
+        os.getenv("CORS_ALLOW_HEADERS", "*"),
+        default=("*",),
+    )
+    cors_allow_credentials = _parse_bool(
+        os.getenv("CORS_ALLOW_CREDENTIALS"),
+        default=False,
+    )
+    if cors_allow_credentials and "*" in cors_allow_origins:
+        raise ValueError(
+            "CORS_ALLOW_ORIGINS cannot contain '*' when CORS_ALLOW_CREDENTIALS=true."
+        )
 
     return Settings(
         chroma_persist_dir=os.getenv("CHROMA_PERSIST_DIR", ".chroma"),
@@ -262,6 +293,14 @@ def get_settings() -> Settings:
         oauth_token_rate_limit_per_client=int(
             os.getenv("OAUTH_TOKEN_RATE_LIMIT_PER_CLIENT", "30")
         ),
+        cors_enabled=_parse_bool(
+            os.getenv("CORS_ENABLED"),
+            default=True,
+        ),
+        cors_allow_origins=cors_allow_origins,
+        cors_allow_methods=cors_allow_methods,
+        cors_allow_headers=cors_allow_headers,
+        cors_allow_credentials=cors_allow_credentials,
         jwt_denylist_enabled=_parse_bool(
             os.getenv("JWT_DENYLIST_ENABLED"),
             default=True,

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
 from src.agent.callback import WebhookCallbackClient
@@ -14,6 +15,7 @@ from src.agent.runtime import AgentRuntime
 from src.agent.worker import MaterialJobWorker
 from src.api import build_lkpd_router, build_material_router, build_oauth_router
 from src.auth.revocation import shutdown_token_denylist
+from src.config import settings
 from src.core.api_response import (
     attach_meta_to_json_response,
     build_request_id,
@@ -56,6 +58,15 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION, lifespan=app_lifespan)
 
+if settings.cors_enabled:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.cors_allow_origins),
+        allow_credentials=settings.cors_allow_credentials,
+        allow_methods=list(settings.cors_allow_methods),
+        allow_headers=list(settings.cors_allow_headers),
+        expose_headers=["X-Request-ID"],
+    )
 
 app.include_router(build_material_router(job_store))
 app.include_router(build_lkpd_router(job_store, lkpd_storage))

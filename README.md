@@ -83,7 +83,7 @@ docker compose up --build
 
 Service endpoints:
 
-- API: `http://localhost:8000`
+- API: `http://localhost:7860`
 - Redis: `localhost:6379`
 
 Stop:
@@ -449,7 +449,7 @@ Success example:
         }
       ]
     },
-    "pdf_url": "http://localhost:8000/api/lkpd/files/lkpd-...",
+    "pdf_url": "http://localhost:7860/api/lkpd/files/lkpd-...",
     "pdf_expires_at": "2026-03-03T00:00:00Z",
     "sources": [],
     "warnings": []
@@ -489,7 +489,7 @@ Failed processing example:
 Get access token:
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8000/api/oauth/token \
+TOKEN=$(curl -s -X POST http://localhost:7860/api/oauth/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=client_credentials" \
   -d "client_id=$OAUTH_CLIENT_ID" \
@@ -500,7 +500,7 @@ TOKEN=$(curl -s -X POST http://localhost:8000/api/oauth/token \
 Submit MCQ job:
 
 ```bash
-curl -X POST http://localhost:8000/api/mcq \
+curl -X POST http://localhost:7860/api/mcq \
   -H "Authorization: Bearer $TOKEN" \
   -F "user_id=user-1" \
   -F "callback_url=https://example.com/hooks/mcq" \
@@ -512,7 +512,7 @@ curl -X POST http://localhost:8000/api/mcq \
 Submit Essay job:
 
 ```bash
-curl -X POST http://localhost:8000/api/essay \
+curl -X POST http://localhost:7860/api/essay \
   -H "Authorization: Bearer $TOKEN" \
   -F "user_id=user-1" \
   -F "callback_url=https://example.com/hooks/essay" \
@@ -524,7 +524,7 @@ curl -X POST http://localhost:8000/api/essay \
 Submit Summary job:
 
 ```bash
-curl -X POST http://localhost:8000/api/summary \
+curl -X POST http://localhost:7860/api/summary \
   -H "Authorization: Bearer $TOKEN" \
   -F "user_id=user-1" \
   -F "callback_url=https://example.com/hooks/summary" \
@@ -536,7 +536,7 @@ curl -X POST http://localhost:8000/api/summary \
 Submit legacy material job (multiple generate types in one request):
 
 ```bash
-curl -X POST http://localhost:8000/api/material \
+curl -X POST http://localhost:7860/api/material \
   -H "Authorization: Bearer $TOKEN" \
   -F "user_id=user-1" \
   -F "callback_url=https://example.com/hooks/material" \
@@ -553,7 +553,7 @@ curl -X POST http://localhost:8000/api/material \
 Submit LKPD job:
 
 ```bash
-curl -X POST http://localhost:8000/api/lkpd \
+curl -X POST http://localhost:7860/api/lkpd \
   -H "Authorization: Bearer $TOKEN" \
   -F "user_id=user-1" \
   -F "callback_url=https://example.com/hooks/lkpd" \
@@ -564,7 +564,7 @@ curl -X POST http://localhost:8000/api/lkpd \
 Download LKPD PDF:
 
 ```bash
-curl -L "http://localhost:8000/api/lkpd/files/lkpd-xxxxxxxx" \
+curl -L "http://localhost:7860/api/lkpd/files/lkpd-xxxxxxxx" \
   -H "Authorization: Bearer $TOKEN" \
   -o lkpd.pdf
 ```
@@ -630,7 +630,7 @@ curl -L "http://localhost:8000/api/lkpd/files/lkpd-xxxxxxxx" \
 - `LKPD_HEADER_TITLE_LINE1=LEMBAR KERJA PESERTA DIDIK (LKPD)`
 - `LKPD_HEADER_TITLE_LINE2=SMARTER AI`
 - `LKPD_HEADER_TITLE_LINE3=`
-- `APP_PUBLIC_BASE_URL=http://localhost:8000`
+- `APP_PUBLIC_BASE_URL=http://localhost:7860`
 - `JWT_ENABLED=true|false` (default: true in `APP_ENV=production`, otherwise false)
 - `JWT_SECRET=` (required when `JWT_ENABLED=true` or `OAUTH_ENABLED=true`, minimum 32 chars)
 - `JWT_ISSUER=my-backend`
