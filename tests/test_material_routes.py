@@ -71,6 +71,9 @@ def test_single_generation_endpoints_enqueue_one_type(
     client = TestClient(app)
     data = {
         "user_id": "user-1",
+        "job_id": "job-backend-1",
+        "material_id": "material-1",
+        "requested_by_id": "requester-1",
         "callback_url": "https://example.com/hooks/material",
         "mcp_enabled": "true",
         **extra_form,
@@ -89,6 +92,9 @@ def test_single_generation_endpoints_enqueue_one_type(
     call = store.calls[0]
     assert call["job_kind"] == "material"
     assert call["request"].generate_types == [expected_type]
+    assert call["request"].job_id == "job-backend-1"
+    assert call["request"].material_id == "material-1"
+    assert call["request"].requested_by_id == "requester-1"
     assert call["filename"] == "materi.txt"
 
 
@@ -100,6 +106,9 @@ def test_material_endpoint_still_supports_multiple_generate_types(
     files = {"file": ("materi.txt", b"hello world", "text/plain")}
     data = [
         ("user_id", "user-1"),
+        ("job_id", "job-backend-1"),
+        ("material_id", "material-1"),
+        ("requested_by_id", "requester-1"),
         ("callback_url", "https://example.com/hooks/material"),
         ("generate_types", "mcq"),
         ("generate_types", "essay"),
@@ -119,6 +128,70 @@ def test_material_endpoint_still_supports_multiple_generate_types(
 
     assert len(store.calls) == 1
     assert store.calls[0]["request"].generate_types == ["mcq", "essay", "summary"]
+    assert store.calls[0]["request"].job_id == "job-backend-1"
+    assert store.calls[0]["request"].material_id == "material-1"
+    assert store.calls[0]["request"].requested_by_id == "requester-1"
+
+
+@pytest.mark.parametrize(
+    ("path", "data"),
+    [
+        (
+            "/api/material",
+            [
+                ("user_id", "user-1"),
+                ("job_id", "job-backend-1"),
+                ("material_id", "material-1"),
+                ("requested_by_id", "requester-1"),
+                ("generate_types", "mcq"),
+            ],
+        ),
+        (
+            "/api/mcq",
+            {
+                "user_id": "user-1",
+                "job_id": "job-backend-1",
+                "material_id": "material-1",
+                "requested_by_id": "requester-1",
+                "mcq_count": "10",
+            },
+        ),
+        (
+            "/api/essay",
+            {
+                "user_id": "user-1",
+                "job_id": "job-backend-1",
+                "material_id": "material-1",
+                "requested_by_id": "requester-1",
+                "essay_count": "3",
+            },
+        ),
+        (
+            "/api/summary",
+            {
+                "user_id": "user-1",
+                "job_id": "job-backend-1",
+                "material_id": "material-1",
+                "requested_by_id": "requester-1",
+                "summary_max_words": "200",
+            },
+        ),
+    ],
+)
+def test_material_endpoints_accept_missing_callback_url(
+    app_and_store: tuple[FastAPI, DummyMaterialJobStore],
+    path: str,
+    data: list[tuple[str, str]] | dict[str, str],
+) -> None:
+    app, store = app_and_store
+    client = TestClient(app)
+    files = {"file": ("materi.txt", b"hello world", "text/plain")}
+
+    response = client.post(path, data=data, files=files)
+
+    assert response.status_code == 202
+    assert len(store.calls) == 1
+    assert store.calls[0]["request"].callback_url is None
 
 
 def test_mcq_validation_error_uses_api_error_envelope(
@@ -129,6 +202,9 @@ def test_mcq_validation_error_uses_api_error_envelope(
     files = {"file": ("materi.txt", b"hello world", "text/plain")}
     data = {
         "user_id": "user-1",
+        "job_id": "job-backend-1",
+        "material_id": "material-1",
+        "requested_by_id": "requester-1",
         "callback_url": "https://example.com/hooks/material",
         "mcq_count": "0",
     }
@@ -149,6 +225,9 @@ def test_mcq_validation_error_uses_api_error_envelope(
             "/api/material",
             [
                 ("user_id", "user-1"),
+                ("job_id", "job-backend-1"),
+                ("material_id", "material-1"),
+                ("requested_by_id", "requester-1"),
                 ("callback_url", "https://example.com/hooks/material"),
                 ("generate_types", "mcq"),
                 ("mcp_enabled", "true"),
@@ -158,6 +237,9 @@ def test_mcq_validation_error_uses_api_error_envelope(
             "/api/mcq",
             {
                 "user_id": "user-1",
+                "job_id": "job-backend-1",
+                "material_id": "material-1",
+                "requested_by_id": "requester-1",
                 "callback_url": "https://example.com/hooks/material",
                 "mcq_count": "10",
                 "mcp_enabled": "true",
@@ -167,6 +249,9 @@ def test_mcq_validation_error_uses_api_error_envelope(
             "/api/essay",
             {
                 "user_id": "user-1",
+                "job_id": "job-backend-1",
+                "material_id": "material-1",
+                "requested_by_id": "requester-1",
                 "callback_url": "https://example.com/hooks/material",
                 "essay_count": "3",
                 "mcp_enabled": "true",
@@ -176,6 +261,9 @@ def test_mcq_validation_error_uses_api_error_envelope(
             "/api/summary",
             {
                 "user_id": "user-1",
+                "job_id": "job-backend-1",
+                "material_id": "material-1",
+                "requested_by_id": "requester-1",
                 "callback_url": "https://example.com/hooks/material",
                 "summary_max_words": "200",
                 "mcp_enabled": "true",

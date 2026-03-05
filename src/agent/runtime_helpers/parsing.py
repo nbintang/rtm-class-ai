@@ -16,6 +16,7 @@ def try_parse_generated_payload(reply: str) -> MaterialGeneratedPayload | None:
     raw = _load_json_lenient(candidate)
     if raw is None:
         return None
+    raw = _normalize_generated_payload(raw)
 
     try:
         return MaterialGeneratedPayload.model_validate(raw)
@@ -178,4 +179,114 @@ def _js_literal_to_python(text: str) -> str:
     out = re.sub(r"\bfalse\b", "False", out)
     out = re.sub(r"\bnull\b", "None", out)
     return out
+
+
+def _normalize_generated_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalize common model quirks without changing the output contract."""
+    mcq_quiz = raw.get("mcq_quiz")
+    if isinstance(mcq_quiz, dict):
+        questions = mcq_quiz.get("questions")
+        if isinstance(questions, list):
+            normalized_questions: list[dict[str, Any]] = []
+            for item in questions:
+                if not isinstance(item, dict):
+                    continue
+
+                question = _to_non_empty_str(item.get("question"))
+                explanation = _to_non_empty_str(item.get("explanation"))
+                options = _normalize_options(item.get("options"))
+                if (
+                    question is None
+                    or explanation is None
+                    or len(options) < 4
+                ):
+                    continue
+
+                normalized_options = options[:4]
+                correct_answer = _normalize_correct_answer(
+                    item.get("correct_answer"),
+                    normalized_options,
+                )
+                if correct_answer is None:
+                    correct_answer = normalized_options[0]
+
+                normalized_questions.append(
+                    {
+                        "question": question,
+                        "options": normalized_options,
+                        "correct_answer": correct_answer,
+                        "explanation": explanation,
+                    }
+                )
+
+            mcq_quiz["questions"] = normalized_questions
+
+    return raw
+
+
+def _to_non_empty_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    return text
+
+
+def _normalize_options(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    options: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text:
+            continue
+        options.append(text)
+    return options
+
+
+def _normalize_correct_answer(value: Any, options: list[str]) -> str | None:
+    if not isinstance(value, str):
+        return None
+    answer = value.strip()
+    if not answer:
+        return None
+
+    # Exact match first.
+    for option in options:
+        if option == answer:
+            return option
+
+    # Case-insensitive text match.
+    lowered = answer.casefold()
+    for option in options:
+        if option.casefold() == lowered:
+            return option
+
+    # Handle "A/B/C/D" answers.
+    idx = _answer_index(answer)
+    if idx is not None and idx < len(options):
+        return options[idx]
+
+    # Handle labeled options like "A. ...", with answer as label or body.
+    for i, option in enumerate(options):
+        option_body = _strip_choice_prefix(option).casefold()
+        if option_body == lowered:
+            return options[i]
+
+    return None
+
+
+def _answer_index(answer: str) -> int | None:
+    match = re.match(r"^\s*([A-Da-d])(?:[\).\:\-\s]|$)", answer)
+    if not match:
+        return None
+    return ord(match.group(1).upper()) - ord("A")
+
+
+def _strip_choice_prefix(text: str) -> str:
+    return re.sub(r"^\s*[A-Da-d][\).\:\-\s]+", "", text).strip()
 

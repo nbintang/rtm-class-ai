@@ -1,7 +1,7 @@
 {
   "job_id": "job-aef0a63eb3814d7290e95d99a622b366",
-  "user_id": "1",
-  "document_id": "doc-9ecbbc152356479381cc6881ee89186e",
+  "material_id": "material-9ecbbc152356479381cc6881ee89186e",
+  "requested_by_id": "1",
   "essay_quiz": {
     "questions": [
       {

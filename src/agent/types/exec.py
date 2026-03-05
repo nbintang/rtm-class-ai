@@ -70,7 +70,9 @@ class QueuedJob(BaseModel):
     job_kind: JobKind
     status: JobStatus = "accepted"
     user_id: str = Field(min_length=1)
-    callback_url: AnyHttpUrl
+    material_id: str | None = None
+    requested_by_id: str | None = None
+    callback_url: AnyHttpUrl | None = None
     request_payload: dict[str, Any] = Field(default_factory=dict)
     filename: str = Field(min_length=1)
     content_type: str | None = None

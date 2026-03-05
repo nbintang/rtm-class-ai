@@ -49,14 +49,14 @@ class DummyJobStore:
         return update
 
 
-def _build_job() -> QueuedJob:
+def _build_job(callback_url: str | None = "https://example.com/callback") -> QueuedJob:
     now = datetime.now(UTC)
     return QueuedJob(
         job_id="job-test-1",
         job_kind="material",
         status="accepted",
         user_id="user-1",
-        callback_url="https://example.com/callback",
+        callback_url=callback_url,
         request_payload={},
         filename="material.txt",
         content_type="text/plain",
@@ -172,3 +172,23 @@ def test_timeout_error_has_non_empty_last_error(monkeypatch) -> None:
 
     assert delivered is False
     assert "ReadTimeout" in (job_store.updates[0]["last_error"] or "")
+
+
+def test_missing_callback_url_skips_delivery() -> None:
+    callback_client = DummyCallbackClient([None])
+    job_store = DummyJobStore()
+    logger = logging.getLogger("test")
+
+    delivered = asyncio.run(
+        deliver_with_retry(
+            callback_client=callback_client,
+            job_store=job_store,
+            job=_build_job(callback_url=None),
+            payload=_build_payload(),
+            logger=logger,
+        )
+    )
+
+    assert delivered is True
+    assert callback_client.calls == 0
+    assert job_store.updates == []

@@ -17,8 +17,8 @@ from src.agent.types import (
 def build_mcp_insert_plan(
     *,
     job_id: str,
-    user_id: str,
-    document_id: str,
+    material_id: str,
+    requested_by_id: str,
     payload: MaterialGeneratedPayload,
     requested_types: list[GenerateType],
 ) -> tuple[list[tuple[str, dict[str, Any]]], list[str]]:
@@ -32,8 +32,8 @@ def build_mcp_insert_plan(
         else:
             mcq_args = McqInsertArgs(
                 job_id=job_id,
-                user_id=user_id,
-                document_id=document_id,
+                material_id=material_id,
+                requested_by_id=requested_by_id,
                 mcq_quiz=payload.mcq_quiz,
             )
             plans.append(
@@ -48,8 +48,8 @@ def build_mcp_insert_plan(
         else:
             essay_args = EssayInsertArgs(
                 job_id=job_id,
-                user_id=user_id,
-                document_id=document_id,
+                material_id=material_id,
+                requested_by_id=requested_by_id,
                 essay_quiz=payload.essay_quiz,
             )
             plans.append(
@@ -64,8 +64,8 @@ def build_mcp_insert_plan(
         else:
             summary_args = SummaryInsertArgs(
                 job_id=job_id,
-                user_id=user_id,
-                document_id=document_id,
+                material_id=material_id,
+                requested_by_id=requested_by_id,
                 summary=payload.summary,
             )
             plans.append(
