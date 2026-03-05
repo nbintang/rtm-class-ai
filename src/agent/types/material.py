@@ -28,11 +28,21 @@ class MaterialUploadRequest(BaseModel):
 
 
 class MaterialAsyncSubmitRequest(MaterialUploadRequest):
-    callback_url: AnyHttpUrl
+    job_id: str = Field(min_length=1)
+    material_id: str = Field(min_length=1)
+    requested_by_id: str = Field(min_length=1)
+    callback_url: AnyHttpUrl | None = None
 
     def to_material_upload_request(self) -> MaterialUploadRequest:
         return MaterialUploadRequest.model_validate(
-            self.model_dump(exclude={"callback_url"})
+            self.model_dump(
+                exclude={
+                    "job_id",
+                    "material_id",
+                    "requested_by_id",
+                    "callback_url",
+                }
+            )
         )
 
 

@@ -54,13 +54,19 @@ class MaterialJobStore:
         assert self._redis is not None
 
         now = datetime.now(UTC)
-        job_id = f"job-{uuid4().hex}"
+        generated_job_id = f"job-{uuid4().hex}"
         encoded_file = base64.b64encode(file_bytes).decode("ascii")
 
         if job_kind == "material":
             request_payload = request.to_material_upload_request().model_dump(mode="json")
+            job_id = request.job_id
+            material_id = request.material_id
+            requested_by_id = request.requested_by_id
         elif job_kind == "lkpd":
             request_payload = request.to_lkpd_upload_request().model_dump(mode="json")
+            job_id = generated_job_id
+            material_id = None
+            requested_by_id = None
         else:
             raise ValueError(f"Unsupported job_kind: {job_kind}")
 
@@ -69,6 +75,8 @@ class MaterialJobStore:
             job_kind=job_kind,
             status="accepted",
             user_id=request.user_id,
+            material_id=material_id,
+            requested_by_id=requested_by_id,
             callback_url=request.callback_url,
             request_payload=request_payload,
             filename=filename,

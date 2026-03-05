@@ -21,6 +21,13 @@ async def deliver_with_retry(
     payload: Any,
     logger: logging.Logger,
 ) -> bool:
+    if not job.callback_url:
+        logger.info(
+            "Skipping callback delivery for job %s because callback_url is empty.",
+            job.job_id,
+        )
+        return True
+
     max_retries = settings.webhook_callback_max_retries
     backoffs = list(settings.webhook_callback_backoff_seconds)
     total_attempts = max_retries + 1

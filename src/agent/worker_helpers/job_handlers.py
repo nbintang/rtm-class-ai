@@ -41,6 +41,8 @@ async def process_material_job(
             filename=job.filename,
             content_type=job.content_type,
             job_id=job.job_id,
+            material_id=job.material_id,
+            requested_by_id=job.requested_by_id,
         )
         callback_payload = MaterialWebhookResultPayload(
             job_id=job.job_id,

@@ -90,6 +90,8 @@ class AgentRuntime:
         filename: str,
         content_type: str | None,
         job_id: str | None = None,
+        material_id: str | None = None,
+        requested_by_id: str | None = None,
     ) -> MaterialGenerateResponse:
         await self.initialize()
 
@@ -184,15 +186,24 @@ class AgentRuntime:
         tool_calls: list[ToolCallLog] = []
 
         if request.mcp_enabled:
+            missing_identifiers: list[str] = []
             if not job_id:
+                missing_identifiers.append("job_id")
+            if not material_id:
+                missing_identifiers.append("material_id")
+            if not requested_by_id:
+                missing_identifiers.append("requested_by_id")
+
+            if missing_identifiers:
                 warnings.append(
-                    "mcp_insert_failed:missing_job_id_for_programmatic_insert"
+                    "mcp_insert_failed:missing_required_identifiers:"
+                    + ",".join(missing_identifiers)
                 )
             else:
                 mcp_tool_calls, mcp_warnings = await self._insert_material_payload_via_mcp(
                     job_id=job_id,
-                    user_id=request.user_id,
-                    document_id=document_id,
+                    material_id=material_id,
+                    requested_by_id=requested_by_id,
                     payload=payload_out,
                     requested_types=request.generate_types,
                 )
@@ -367,8 +378,8 @@ class AgentRuntime:
         self,
         *,
         job_id: str,
-        user_id: str,
-        document_id: str,
+        material_id: str,
+        requested_by_id: str,
         payload: MaterialGeneratedPayload,
         requested_types: list[GenerateType],
     ) -> tuple[list[ToolCallLog], list[str]]:
@@ -376,8 +387,8 @@ class AgentRuntime:
             registry=self._mcp_registry,
             logger=logger,
             job_id=job_id,
-            user_id=user_id,
-            document_id=document_id,
+            material_id=material_id,
+            requested_by_id=requested_by_id,
             payload=payload,
             requested_types=requested_types,
         )
@@ -386,15 +397,15 @@ class AgentRuntime:
     def _build_mcp_insert_plan(
         *,
         job_id: str,
-        user_id: str,
-        document_id: str,
+        material_id: str,
+        requested_by_id: str,
         payload: MaterialGeneratedPayload,
         requested_types: list[GenerateType],
     ) -> tuple[list[tuple[str, dict[str, Any]]], list[str]]:
         return build_mcp_insert_plan(
             job_id=job_id,
-            user_id=user_id,
-            document_id=document_id,
+            material_id=material_id,
+            requested_by_id=requested_by_id,
             payload=payload,
             requested_types=requested_types,
         )

@@ -13,8 +13,8 @@ async def insert_material_payload_via_mcp(
     registry: MCPToolRegistry,
     logger: logging.Logger,
     job_id: str,
-    user_id: str,
-    document_id: str,
+    material_id: str,
+    requested_by_id: str,
     payload: MaterialGeneratedPayload,
     requested_types: list[GenerateType],
 ) -> tuple[list[ToolCallLog], list[str]]:
@@ -23,8 +23,8 @@ async def insert_material_payload_via_mcp(
 
     plans, plan_warnings = build_mcp_insert_plan(
         job_id=job_id,
-        user_id=user_id,
-        document_id=document_id,
+        material_id=material_id,
+        requested_by_id=requested_by_id,
         payload=payload,
         requested_types=requested_types,
     )
@@ -46,10 +46,10 @@ async def insert_material_payload_via_mcp(
             )
         except Exception as exc:
             logger.exception(
-                "mcp_insert_failed tool=%s job_id=%s document_id=%s",
+                "mcp_insert_failed tool=%s job_id=%s material_id=%s",
                 tool_name,
                 job_id,
-                document_id,
+                material_id,
             )
             warnings.append(f"mcp_insert_failed:{tool_name}:{exc}")
 

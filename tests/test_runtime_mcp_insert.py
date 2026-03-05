@@ -35,8 +35,8 @@ def test_build_mcp_insert_plan_injects_required_metadata() -> None:
 
     plans, warnings = AgentRuntime._build_mcp_insert_plan(
         job_id="job-1",
-        user_id="user-1",
-        document_id="doc-1",
+        material_id="material-1",
+        requested_by_id="requester-1",
         payload=payload,
         requested_types=["mcq", "summary"],
     )
@@ -45,8 +45,8 @@ def test_build_mcp_insert_plan_injects_required_metadata() -> None:
     assert [name for name, _ in plans] == ["insert_mcq", "insert_summary"]
     for _, args in plans:
         assert args["job_id"] == "job-1"
-        assert args["user_id"] == "user-1"
-        assert args["document_id"] == "doc-1"
+        assert args["material_id"] == "material-1"
+        assert args["requested_by_id"] == "requester-1"
 
 
 def test_generation_contract_does_not_fail_on_missing_requested_type() -> None:
