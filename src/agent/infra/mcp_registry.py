@@ -6,6 +6,7 @@ from typing import Any
 
 from src.agent.infra.mcp_config import parse_mcp_servers_config
 from src.config import settings
+from langchain_mcp_adapters.client import MultiServerMCPClient as _MultiServerMCPClient
 
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,10 @@ class MCPToolRegistry:
         self._tool_map: dict[str, Any] = {}
         self._warnings: list[str] = []
         self._loaded = False
-        self._has_config = bool(settings.mcp_servers_json.strip() and settings.mcp_servers_json.strip() != "{}")
+        self._has_config = bool(
+            settings.mcp_servers_json.strip()
+            and settings.mcp_servers_json.strip() != "{}"
+        )
 
     @property
     def has_config(self) -> bool:
@@ -39,9 +43,7 @@ class MCPToolRegistry:
             self._loaded = True
             return self._tools
 
-        try:
-            from langchain_mcp_adapters.client import MultiServerMCPClient
-        except ImportError:
+        if _MultiServerMCPClient is None:
             self._warnings.append(
                 "langchain-mcp-adapters is not installed. MCP tools are disabled."
             )
@@ -49,7 +51,7 @@ class MCPToolRegistry:
             return self._tools
 
         try:
-            self._client = MultiServerMCPClient(servers)
+            self._client = _MultiServerMCPClient(servers)
             self._tools = await self._client.get_tools()
             self._tool_map = {
                 str(getattr(tool, "name", "")).strip(): tool

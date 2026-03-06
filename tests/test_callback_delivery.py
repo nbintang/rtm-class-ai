@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+import src.agent.worker_helpers.delivery as delivery_module
 from src.agent.types import MaterialWebhookResultPayload, QueuedJob
 from src.agent.worker_helpers.delivery import deliver_with_retry
 from src.config import settings
@@ -93,8 +94,6 @@ def _build_payload() -> MaterialWebhookResultPayload:
 
 
 def test_retry_then_success(monkeypatch) -> None:
-    import src.agent.worker_helpers.delivery as delivery_module
-
     async def no_sleep(_: float) -> None:
         return None
 

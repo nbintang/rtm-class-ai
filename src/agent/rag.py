@@ -9,6 +9,22 @@ from langchain_core.embeddings import DeterministicFakeEmbedding, Embeddings
 
 from src.config import settings
 
+try:
+    from chromadb.utils.embedding_functions import DefaultEmbeddingFunction as _DefaultEmbeddingFunction
+except Exception as exc:
+    _DefaultEmbeddingFunction = None
+    _DEFAULT_EMBEDDING_IMPORT_ERROR: Exception | None = exc
+else:
+    _DEFAULT_EMBEDDING_IMPORT_ERROR = None
+
+try:
+    from langchain_chroma import Chroma as _Chroma
+except ImportError as exc:
+    _Chroma = None
+    _CHROMA_IMPORT_ERROR: ImportError | None = exc
+else:
+    _CHROMA_IMPORT_ERROR = None
+
 
 def _normalize_chunks(chunks: Iterable[str]) -> list[str]:
     normalized: list[str] = []
@@ -91,12 +107,16 @@ def _short_error_message(exc: Exception, *, max_chars: int = 260) -> str:
 
 
 def _build_embeddings() -> tuple[Embeddings, str | None]:
-    try:
-        from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+    if _DefaultEmbeddingFunction is None:
+        return (
+            DeterministicFakeEmbedding(size=256),
+            f"RAG embedding fallback mode: {_DEFAULT_EMBEDDING_IMPORT_ERROR}",
+        )
 
+    try:
         class ChromaDefaultEmbeddings(Embeddings):
             def __init__(self) -> None:
-                self._fn = DefaultEmbeddingFunction()
+                self._fn = _DefaultEmbeddingFunction()
 
             def embed_documents(self, texts: list[str]) -> list[list[float]]:
                 vectors = self._fn(texts)
@@ -123,10 +143,13 @@ class MaterialRAGStore:
         if emb_warning:
             self._warning = emb_warning
 
-        try:
-            from langchain_chroma import Chroma
+        if _Chroma is None:
+            warning = f"Material RAG vectorstore fallback mode: {_CHROMA_IMPORT_ERROR}"
+            self._warning = f"{self._warning}; {warning}" if self._warning else warning
+            return
 
-            self._vectorstore = Chroma(
+        try:
+            self._vectorstore = _Chroma(
                 collection_name=settings.rag_collection_name,
                 persist_directory=settings.chroma_persist_dir,
                 embedding_function=self._embeddings,

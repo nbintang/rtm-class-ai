@@ -13,6 +13,7 @@ from src.agent.types import (
 )
 from src.config import settings
 
+from redis.asyncio import Redis as _Redis
 
 class MaterialJobStore:
     def __init__(self) -> None:
@@ -22,14 +23,12 @@ class MaterialJobStore:
         if self._redis is not None:
             return
 
-        try:
-            from redis.asyncio import Redis
-        except ImportError as exc:
+        if _Redis is None:
             raise RuntimeError(
                 "redis package is required for async material queue."
-            ) from exc
+            )
 
-        self._redis = Redis.from_url(
+        self._redis = _Redis.from_url(
             settings.redis_url,
             decode_responses=True,
         )

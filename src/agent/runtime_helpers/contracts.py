@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, cast
 
 from src.agent.runtime_helpers.errors import LkpdValidationError
 from src.agent.types import (
@@ -11,6 +12,40 @@ from src.agent.types import (
     MaterialGeneratedPayload,
     McqInsertArgs,
     SummaryInsertArgs,
+)
+
+
+@dataclass(frozen=True)
+class _InsertSpec:
+    requested_type: GenerateType
+    payload_field: str
+    missing_warning: str
+    tool_name: str
+    args_model: type[Any]
+
+
+_INSERT_SPECS: tuple[_InsertSpec, ...] = (
+    _InsertSpec(
+        requested_type="mcq",
+        payload_field="mcq_quiz",
+        missing_warning="mcp_insert_skipped:mcq_quiz_missing",
+        tool_name="insert_mcq",
+        args_model=McqInsertArgs,
+    ),
+    _InsertSpec(
+        requested_type="essay",
+        payload_field="essay_quiz",
+        missing_warning="mcp_insert_skipped:essay_quiz_missing",
+        tool_name="insert_essay",
+        args_model=EssayInsertArgs,
+    ),
+    _InsertSpec(
+        requested_type="summary",
+        payload_field="summary",
+        missing_warning="mcp_insert_skipped:summary_missing",
+        tool_name="insert_summary",
+        args_model=SummaryInsertArgs,
+    ),
 )
 
 
@@ -26,54 +61,22 @@ def build_mcp_insert_plan(
     warnings: list[str] = []
     selected = set(requested_types)
 
-    if "mcq" in selected:
-        if payload.mcq_quiz is None:
-            warnings.append("mcp_insert_skipped:mcq_quiz_missing")
-        else:
-            mcq_args = McqInsertArgs(
-                job_id=job_id,
-                material_id=material_id,
-                requested_by_id=requested_by_id,
-                mcq_quiz=payload.mcq_quiz,
-            )
-            plans.append(
-                (
-                    "insert_mcq",
-                    mcq_args.model_dump(mode="json"),
-                )
-            )
-    if "essay" in selected:
-        if payload.essay_quiz is None:
-            warnings.append("mcp_insert_skipped:essay_quiz_missing")
-        else:
-            essay_args = EssayInsertArgs(
-                job_id=job_id,
-                material_id=material_id,
-                requested_by_id=requested_by_id,
-                essay_quiz=payload.essay_quiz,
-            )
-            plans.append(
-                (
-                    "insert_essay",
-                    essay_args.model_dump(mode="json"),
-                )
-            )
-    if "summary" in selected:
-        if payload.summary is None:
-            warnings.append("mcp_insert_skipped:summary_missing")
-        else:
-            summary_args = SummaryInsertArgs(
-                job_id=job_id,
-                material_id=material_id,
-                requested_by_id=requested_by_id,
-                summary=payload.summary,
-            )
-            plans.append(
-                (
-                    "insert_summary",
-                    summary_args.model_dump(mode="json"),
-                )
-            )
+    for spec in _INSERT_SPECS:
+        if spec.requested_type not in selected:
+            continue
+
+        content = getattr(payload, spec.payload_field)
+        if content is None:
+            warnings.append(spec.missing_warning)
+            continue
+
+        args = spec.args_model(
+            job_id=job_id,
+            material_id=material_id,
+            requested_by_id=requested_by_id,
+            **{spec.payload_field: content},
+        )
+        plans.append((spec.tool_name, cast(dict[str, Any], args.model_dump(mode="json"))))
 
     return plans, warnings
 
@@ -91,54 +94,34 @@ def enforce_generation_contract(
     selected = set(generate_types)
 
     if "mcq" in selected:
-        if payload.mcq_quiz is None:
-            logger.warning("model_output_validation_failed type=mcq reason=missing")
-            warnings.append("model_output_validation_failed:mcq_missing")
-        else:
-            mcq_questions = payload.mcq_quiz.questions
-            if len(mcq_questions) < mcq_count:
-                logger.warning(
-                    "model_output_validation_failed type=mcq reason=too_few got=%s expected=%s",
-                    len(mcq_questions),
-                    mcq_count,
-                )
-                warnings.append(
-                    f"model_output_validation_failed:mcq_count_lt_requested:{len(mcq_questions)}<{mcq_count}"
-                )
-            if len(mcq_questions) > mcq_count:
-                warnings.append(
-                    f"MCQ questions trimmed from {len(mcq_questions)} to {mcq_count}."
-                )
-                mcq_questions = mcq_questions[:mcq_count]
-            payload.mcq_quiz.questions = mcq_questions
+        payload.mcq_quiz = _enforce_quiz_contract(
+            quiz=payload.mcq_quiz,
+            quiz_type="mcq",
+            requested_count=mcq_count,
+            trim_label="MCQ",
+            warnings=warnings,
+            logger=logger,
+        )
     elif payload.mcq_quiz is not None:
-        warnings.append("Model returned mcq_quiz even though it was not requested.")
-        payload.mcq_quiz = None
+        payload.mcq_quiz = _drop_unrequested_payload(
+            payload_name="mcq_quiz",
+            warnings=warnings,
+        )
 
     if "essay" in selected:
-        if payload.essay_quiz is None:
-            logger.warning("model_output_validation_failed type=essay reason=missing")
-            warnings.append("model_output_validation_failed:essay_missing")
-        else:
-            essay_questions = payload.essay_quiz.questions
-            if len(essay_questions) < essay_count:
-                logger.warning(
-                    "model_output_validation_failed type=essay reason=too_few got=%s expected=%s",
-                    len(essay_questions),
-                    essay_count,
-                )
-                warnings.append(
-                    f"model_output_validation_failed:essay_count_lt_requested:{len(essay_questions)}<{essay_count}"
-                )
-            if len(essay_questions) > essay_count:
-                warnings.append(
-                    f"Essay questions trimmed from {len(essay_questions)} to {essay_count}."
-                )
-                essay_questions = essay_questions[:essay_count]
-            payload.essay_quiz.questions = essay_questions
+        payload.essay_quiz = _enforce_quiz_contract(
+            quiz=payload.essay_quiz,
+            quiz_type="essay",
+            requested_count=essay_count,
+            trim_label="Essay",
+            warnings=warnings,
+            logger=logger,
+        )
     elif payload.essay_quiz is not None:
-        warnings.append("Model returned essay_quiz even though it was not requested.")
-        payload.essay_quiz = None
+        payload.essay_quiz = _drop_unrequested_payload(
+            payload_name="essay_quiz",
+            warnings=warnings,
+        )
 
     if "summary" in selected:
         if payload.summary is None:
@@ -154,8 +137,10 @@ def enforce_generation_contract(
                     overview_words[:summary_max_words]
                 )
     elif payload.summary is not None:
-        warnings.append("Model returned summary even though it was not requested.")
-        payload.summary = None
+        payload.summary = _drop_unrequested_payload(
+            payload_name="summary",
+            warnings=warnings,
+        )
 
     return payload
 
@@ -191,4 +176,44 @@ def enforce_lkpd_contract(
     lkpd.activities = activities
 
     return payload
+
+
+def _enforce_quiz_contract(
+    *,
+    quiz: Any,
+    quiz_type: str,
+    requested_count: int,
+    trim_label: str,
+    warnings: list[str],
+    logger: logging.Logger,
+) -> Any:
+    if quiz is None:
+        logger.warning("model_output_validation_failed type=%s reason=missing", quiz_type)
+        warnings.append(f"model_output_validation_failed:{quiz_type}_missing")
+        return None
+
+    questions = quiz.questions
+    question_count = len(questions)
+    if question_count < requested_count:
+        logger.warning(
+            "model_output_validation_failed type=%s reason=too_few got=%s expected=%s",
+            quiz_type,
+            question_count,
+            requested_count,
+        )
+        warnings.append(
+            f"model_output_validation_failed:{quiz_type}_count_lt_requested:{question_count}<{requested_count}"
+        )
+    if question_count > requested_count:
+        warnings.append(
+            f"{trim_label} questions trimmed from {question_count} to {requested_count}."
+        )
+        questions = questions[:requested_count]
+    quiz.questions = questions
+    return quiz
+
+
+def _drop_unrequested_payload(*, payload_name: str, warnings: list[str]) -> None:
+    warnings.append(f"Model returned {payload_name} even though it was not requested.")
+    return None
 

@@ -9,6 +9,14 @@ from langchain_core.documents import Document
 
 from src.config import settings
 
+try:
+    from langchain_chroma import Chroma as _Chroma
+except ImportError as exc:
+    _Chroma = None
+    _CHROMA_IMPORT_ERROR: ImportError | None = exc
+else:
+    _CHROMA_IMPORT_ERROR = None
+
 
 class LongTermMemoryStore:
     def __init__(self) -> None:
@@ -16,10 +24,14 @@ class LongTermMemoryStore:
         self._init_warning: str | None = None
         self._vectorstore = None
 
-        try:
-            from langchain_chroma import Chroma
+        if _Chroma is None:
+            self._init_warning = (
+                f"Long-term vector memory fallback mode: {_CHROMA_IMPORT_ERROR}"
+            )
+            return
 
-            self._vectorstore = Chroma(
+        try:
+            self._vectorstore = _Chroma(
                 collection_name=settings.agent_memory_collection,
                 persist_directory=settings.chroma_persist_dir,
             )
