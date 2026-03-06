@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from src.config import settings
 
+try:
+    import httpx
+except ImportError as exc:
+    httpx = None
+    _HTTPX_IMPORT_ERROR: ImportError | None = exc
+else:
+    _HTTPX_IMPORT_ERROR = None
+
 
 class WebhookCallbackClient:
     def __init__(self) -> None:
@@ -11,10 +19,8 @@ class WebhookCallbackClient:
         if self._client is not None:
             return
 
-        try:
-            import httpx
-        except ImportError as exc:
-            raise RuntimeError("httpx package is required for webhook callback.") from exc
+        if httpx is None:
+            raise RuntimeError("httpx package is required for webhook callback.") from _HTTPX_IMPORT_ERROR
 
         self._client = httpx.AsyncClient(
             timeout=settings.webhook_callback_timeout_seconds,

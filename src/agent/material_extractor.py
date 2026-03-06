@@ -3,19 +3,20 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
+from pypdf import PdfReader as _PdfReader
+from pptx import Presentation as _Presentation
+
 
 def _normalize_text(text: str) -> str:
     return " ".join(text.replace("\x00", " ").split())
 
 
 def extract_text_from_pdf(payload: bytes) -> str:
-    try:
-        from pypdf import PdfReader
-    except ImportError as exc:
-        raise ValueError("PDF support is unavailable. Install pypdf.") from exc
+    if _PdfReader is None:
+        raise ValueError("PDF support is unavailable. Install pypdf.") 
 
     try:
-        reader = PdfReader(BytesIO(payload))
+        reader = _PdfReader(BytesIO(payload))
     except Exception as exc:
         raise ValueError(f"Failed to read PDF file: {exc}") from exc
 
@@ -28,13 +29,11 @@ def extract_text_from_pdf(payload: bytes) -> str:
 
 
 def extract_text_from_pptx(payload: bytes) -> str:
-    try:
-        from pptx import Presentation
-    except ImportError as exc:
-        raise ValueError("PPTX support is unavailable. Install python-pptx.") from exc
+    if _Presentation is None:
+        raise ValueError("PPTX support is unavailable. Install python-pptx.")
 
     try:
-        presentation = Presentation(BytesIO(payload))
+        presentation = _Presentation(BytesIO(payload))
     except Exception as exc:
         raise ValueError(f"Failed to read PPTX file: {exc}") from exc
 

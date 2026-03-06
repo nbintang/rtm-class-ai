@@ -4,16 +4,17 @@ from typing import Any
 
 from src.agent.infra.memory_store import LongTermMemoryStore
 
+from langchain_core.tools import tool as _tool
+
 
 def build_internal_tools(*, memory_store: LongTermMemoryStore, user_id: str) -> list[Any]:
-    try:
-        from langchain_core.tools import tool
-    except ImportError as exc:
+    if _tool is None:
         raise RuntimeError(
             "langchain-core is not installed. Install dependencies before using /api/material."
-        ) from exc
+        )
+    tool_decorator = _tool
 
-    @tool
+    @tool_decorator
     def remember_user_fact(fact: str, memory_type: str = "general") -> str:
         """Save a durable user fact into long-term memory."""
         memory_id = memory_store.remember_fact(
@@ -25,7 +26,7 @@ def build_internal_tools(*, memory_store: LongTermMemoryStore, user_id: str) -> 
             return "No memory saved because the fact was empty."
         return f"Saved memory with id {memory_id}."
 
-    @tool
+    @tool_decorator
     def recall_user_facts(query: str = "", limit: int = 5) -> str:
         """Recall previously saved user facts for personalization."""
         docs = memory_store.recall_user_facts(

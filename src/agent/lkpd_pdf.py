@@ -7,8 +7,25 @@ from typing import Any
 from src.agent.types import LkpdContent, MaterialInfo
 from src.config import settings
 
+from reportlab.lib import colors as _reportlab_colors
+from reportlab.lib.pagesizes import A4 as _A4
+from reportlab.lib.styles import getSampleStyleSheet as _getSampleStyleSheet
+from reportlab.platypus import (
+    BaseDocTemplate as _BaseDocTemplate,
+    Frame as _Frame,
+    PageTemplate as _PageTemplate,
+    Paragraph as _Paragraph,
+    Spacer as _Spacer,
+)
+
 _HEADER_HEIGHT = 74
 _FIRST_PAGE_EXTRAS_HEIGHT = 106
+
+
+def _get_reportlab_colors() -> Any:
+    if _reportlab_colors is None:
+        raise RuntimeError("reportlab package is required for LKPD PDF rendering.")
+    return _reportlab_colors
 
 
 def _resolve_logo_path() -> str | None:
@@ -25,7 +42,7 @@ def _resolve_logo_path() -> str | None:
 
 
 def _draw_student_identity_block(canvas: Any, doc: Any, y_top: float) -> None:
-    from reportlab.lib import colors
+    colors = _get_reportlab_colors()
 
     box_x = doc.leftMargin
     box_w = doc.pagesize[0] - doc.leftMargin - doc.rightMargin
@@ -58,7 +75,7 @@ def _draw_header_brand(
     title_line2: str,
     title_line3: str,
 ) -> None:
-    from reportlab.lib import colors
+    colors = _get_reportlab_colors()
 
     page_w, page_h = doc.pagesize
     header_y = page_h - _HEADER_HEIGHT
@@ -114,7 +131,7 @@ def _draw_first_page_extras(
     material: MaterialInfo,
     document_id: str,
 ) -> None:
-    from reportlab.lib import colors
+    colors = _get_reportlab_colors()
 
     page_h = doc.pagesize[1]
     extras_top = page_h - _HEADER_HEIGHT - 10
@@ -183,13 +200,31 @@ def render_lkpd_pdf(
     material: MaterialInfo,
     document_id: str,
 ) -> bytes:
-    try:
-        from reportlab.lib import colors
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer
-    except ImportError as exc:
-        raise RuntimeError("reportlab package is required for LKPD PDF rendering.") from exc
+    if any(
+        item is None
+        for item in (
+            _reportlab_colors,
+            _A4,
+            _getSampleStyleSheet,
+            _BaseDocTemplate,
+            _Frame,
+            _PageTemplate,
+            _Paragraph,
+            _Spacer,
+        )
+    ):
+        raise RuntimeError(
+            "reportlab package is required for LKPD PDF rendering."
+        )
+
+    colors = _reportlab_colors
+    A4 = _A4
+    getSampleStyleSheet = _getSampleStyleSheet
+    BaseDocTemplate = _BaseDocTemplate
+    Frame = _Frame
+    PageTemplate = _PageTemplate
+    Paragraph = _Paragraph
+    Spacer = _Spacer
 
     try:
         accent_color = colors.HexColor(settings.lkpd_header_accent_hex)

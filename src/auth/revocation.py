@@ -1,13 +1,10 @@
 from __future__ import annotations
-
 import asyncio
 import logging
-
 from src.config import settings
+from redis.asyncio import Redis as _Redis
 
 logger = logging.getLogger(__name__)
-
-
 class RedisTokenDenylist:
     def __init__(self) -> None:
         self._redis = None
@@ -34,13 +31,11 @@ class RedisTokenDenylist:
             if self._redis is not None:
                 return self._redis
 
-            try:
-                from redis.asyncio import Redis
-            except ImportError:
+            if _Redis is None:
                 self._warn_once("redis package missing; JWT denylist disabled.")
                 return None
 
-            redis = Redis.from_url(
+            redis = _Redis.from_url(
                 settings.redis_url,
                 decode_responses=True,
             )
