@@ -1,0 +1,57 @@
+name: Deploy To VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: true
+
+env:
+  SERVER_APP_DIR: /var/www/rtm-corndog
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf "%s" "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy on VPS
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          BRANCH: ${{ github.ref_name }}
+          APP_DIR: ${{ env.SERVER_APP_DIR }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_ed25519 "${SERVER_USER}@${SERVER_HOST}" "APP_DIR='${APP_DIR}' BRANCH='${BRANCH}' bash -s" <<'EOF'
+          set -euo pipefail
+
+          APP_DIR="${APP_DIR/#\~/$HOME}"
+
+          if [ ! -d "${APP_DIR}/.git" ]; then
+            echo "Repository not found at ${APP_DIR}. Clone it first on VPS."
+            exit 1
+          fi
+
+          cd "${APP_DIR}"
+          git fetch origin "${BRANCH}" --prune
+          git reset --hard "origin/${BRANCH}"
+
+          docker compose up -d --build --remove-orphans
+          docker image prune -f
+          EOF
