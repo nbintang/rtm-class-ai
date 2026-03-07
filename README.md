@@ -102,6 +102,30 @@ uv run task logs
 uv run task ps
 ```
 
+## Auto deploy to VPS (GitHub Actions)
+
+Workflow file: `.github/workflows/deploy.yml`
+
+Trigger:
+- Push to `main`
+- Manual run via `workflow_dispatch`
+
+Required GitHub repository secrets:
+- `SERVER_HOST` (VPS IP/domain)
+- `SERVER_USER` (SSH user)
+- `SERVER_SSH_KEY` (private key content)
+
+One-time VPS preparation:
+1. Clone this repo to `/var/www/rtm-corndog` (or edit `SERVER_APP_DIR` in workflow).
+2. Ensure `.env` is present in that folder.
+3. Ensure Docker + Docker Compose plugin are installed.
+
+After this setup, every push to `main` will deploy automatically by SSH, fetch latest code, and run:
+
+```bash
+docker compose up -d --build --remove-orphans
+```
+
 ## HTTP API
 
 All API endpoints in this section are intended for service-to-service usage.
