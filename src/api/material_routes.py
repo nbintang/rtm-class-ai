@@ -8,7 +8,7 @@ from src.agent.jobs import MaterialJobStore
 from src.agent.types import GenerateType, MaterialAsyncSubmitRequest
 from src.auth import require_jwt
 from src.config import settings
-from src.core.api_response import ApiSuccessResponse
+from src.core.api_response import ApiSuccessResponse, build_success_payload
 from src.api.job_submission import (
     build_job_accepted_response,
     enqueue_uploaded_job,
@@ -122,6 +122,16 @@ def build_material_router(job_store: MaterialJobStore) -> APIRouter:
     mcq_scopes = list(settings.jwt_required_scopes.get("/api/mcq", material_scopes))
     essay_scopes = list(settings.jwt_required_scopes.get("/api/essay", material_scopes))
     summary_scopes = list(settings.jwt_required_scopes.get("/api/summary", material_scopes))
+
+    @router.get("/")
+    async def root_health_check(
+        http_request: Request,
+    ) -> ApiSuccessResponse[dict[str, str]]:
+        return build_success_payload(
+            http_request,
+            data={"status": "ok"},
+            message="API is running.",
+        )
 
     @router.post(
         "/api/material",
