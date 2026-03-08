@@ -1,4 +1,4 @@
-# rtm-class-ai
+# RTM Class AI
 
 Standalone FastAPI service for asynchronous material generation (MCQ, essay, summary) from uploaded files.
 
