@@ -297,7 +297,7 @@ Run API:
 uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Or use helper launcher (`127.0.0.1:7860`):
+Or use helper launcher :
 ```bash
 python cmd/run.py
 ```
