@@ -206,14 +206,14 @@ class MaterialJobStore:
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                     ON CONFLICT ("id") DO NOTHING
                     """,
-                    self._parse_uuid(job.job_id),
-                    self._parse_uuid(job.material_id),
-                    self._parse_uuid(job.requested_by_id),
+                    job.job_id,
+                    job.material_id,
+                    job.requested_by_id,
                     job_type,
                     "accepted",
                     job.job_id,
-                    job.created_at,
-                    job.updated_at,
+                    job.created_at if job.created_at.tzinfo else job.created_at.replace(tzinfo=UTC),
+                    job.updated_at if job.updated_at.tzinfo else job.updated_at.replace(tzinfo=UTC),
                     0,
                     params_json
                 )
@@ -231,9 +231,10 @@ class MaterialJobStore:
                     """
                     UPDATE "AIJob"
                     SET "status" = $1, "updatedAt" = $2, "lastError" = $3
-                    WHERE "id" = $4 OR "externalJobId" = $4
+                    WHERE "id" = $4 OR "externalJobId" = $5
                     """,
-                    status, datetime.now(UTC), last_error, self._parse_uuid(job_id)
+                    status, datetime.now(UTC), last_error, 
+                    job_id, job_id
                 )
         except Exception as exc:
             logger.warning("Failed to update Job status in Postgres: %s", exc)
