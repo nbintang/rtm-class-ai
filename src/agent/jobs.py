@@ -203,7 +203,11 @@ class MaterialJobStore:
                     INSERT INTO "AIJob" (
                         "id", "materialId", "requestedById", "type", "status",
                         "externalJobId", "createdAt", "updatedAt", "attempts", "parameters"
-                    ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10)
+                    ) VALUES (
+                        $1::uuid, $2::uuid, $3::uuid, 
+                        $4::"AIJobType", $5::"AIJobStatus", 
+                        $6, $7, $8, $9, $10
+                    )
                     ON CONFLICT ("id") DO NOTHING
                     """,
                     self._ensure_uuid_str(job.job_id),
@@ -233,8 +237,8 @@ class MaterialJobStore:
                 await conn.execute(
                     """
                     UPDATE "AIJob"
-                    SET "status" = $1, "updatedAt" = $2, "lastError" = $3
-                    WHERE "id" = $4::uuid OR "externalJobId" = $5
+                    SET "status" = $1::"AIJobStatus", "updatedAt" = $2, "lastError" = $3
+                    WHERE "id"::text = $4 OR "externalJobId" = $5
                     """,
                     status, datetime.now(UTC), last_error, 
                     uuid_str, job_id
