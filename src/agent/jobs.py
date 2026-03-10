@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import base64
-import json
 import logging
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-import asyncpg
 from redis.asyncio import Redis as _Redis
 
 from src.agent.types import (
@@ -24,7 +22,6 @@ logger = logging.getLogger(__name__)
 class MaterialJobStore:
     def __init__(self) -> None:
         self._redis: _Redis | None = None
-        self._db_pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         if self._redis is None:
@@ -37,28 +34,10 @@ class MaterialJobStore:
             )
             await self._redis.ping()
 
-        if self._db_pool is None and settings.db_host:
-            try:
-                self._db_pool = await asyncpg.create_pool(
-                    host=settings.db_host,
-                    port=settings.db_port,
-                    user=settings.db_user,
-                    password=settings.db_pass,
-                    database=settings.db_name,
-                    min_size=1,
-                    max_size=10,
-                )
-                logger.info("Postgres pool initialized for AIJob store")
-            except Exception as exc:
-                logger.warning("Failed to initialize Postgres pool: %s", exc)
-
     async def shutdown(self) -> None:
         if self._redis is not None:
             await self._redis.close()
             self._redis = None
-        if self._db_pool is not None:
-            await self._db_pool.close()
-            self._db_pool = None
 
     async def enqueue_job(
         self,
@@ -86,8 +65,8 @@ class MaterialJobStore:
             assert isinstance(request, LkpdAsyncSubmitRequest)
             request_payload = request.to_lkpd_upload_request().model_dump(mode="json")
             job_id = f"job-{uuid4().hex}"
-            material_id = str(uuid4())  # LKPD doesn't always have material_id in request
-            requested_by_id = request.user_id
+            material_id = None
+            requested_by_id = None
         else:
             raise ValueError(f"Unsupported job_kind: {job_kind}")
 
@@ -109,7 +88,6 @@ class MaterialJobStore:
         )
 
         await self._save_job(job)
-        await self._insert_to_postgres(job)
 
         # LPUSH + BRPOP gives FIFO semantics.
         await self._redis.lpush(self._queue_key(job_kind), job_id)
@@ -161,10 +139,6 @@ class MaterialJobStore:
         job.updated_at = datetime.now(UTC)
         await self._save_job(job)
 
-        # Update DB status if pool is available
-        if status is not None:
-            await self._update_postgres_status(job_id, status, job.last_error)
-
         return job
 
     @staticmethod
@@ -178,101 +152,6 @@ class MaterialJobStore:
             job.model_dump_json(),
             ex=settings.job_ttl_seconds,
         )
-
-    async def _insert_to_postgres(self, job: QueuedJob) -> None:
-        if self._db_pool is None:
-            return
-
-        try:
-            job_id_uuid = self._ensure_uuid(job.job_id)
-            material_id_uuid = self._ensure_uuid(job.material_id)
-            requested_by_id_uuid = self._ensure_uuid(job.requested_by_id)
-
-            job_type = "MCQ"
-            if job.job_kind == "lkpd":
-                job_type = "LKPD"
-            else:
-                gt = job.request_payload.get("generate_types", [])
-                if gt:
-                    t = gt[0].lower()
-                    if t == "mcq": job_type = "MCQ"
-                    elif t == "essay": job_type = "ESSAY"
-                    elif t == "summary": job_type = "SUMMARY"
-
-            params_json = json.dumps(job.request_payload)
-            now = datetime.now(UTC)
-
-            async with self._db_pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    INSERT INTO "AIJob" (
-                        "id", "materialId", "requestedById", "type", "status",
-                        "externalJobId", "createdAt", "updatedAt", "attempts", "parameters"
-                    ) VALUES (
-                        $1::uuid, $2::uuid, $3::uuid, 
-                        $4::"AIJobType", $5::"AIJobStatus", 
-                        $6::text, $7, $8, $9, $10
-                    )
-                    ON CONFLICT ("id") DO NOTHING
-                    """,
-                    job_id_uuid,
-                    material_id_uuid,
-                    requested_by_id_uuid,
-                    job_type,
-                    "accepted",
-                    job.job_id,
-                    job.created_at if job.created_at.tzinfo else job.created_at.replace(tzinfo=UTC),
-                    job.updated_at if job.updated_at.tzinfo else job.updated_at.replace(tzinfo=UTC),
-                    0,
-                    params_json
-                )
-                logger.info("Job %s inserted into Postgres successfully", job.job_id)
-        except Exception as exc:
-            logger.error("Failed to insert Job into Postgres: %s", exc)
-
-    async def _update_postgres_status(self, job_id: str, status: str, last_error: str | None = None) -> None:
-        if self._db_pool is None:
-            return
-
-        try:
-            job_id_uuid = self._ensure_uuid(job_id)
-            async with self._db_pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    UPDATE "AIJob"
-                    SET "status" = $1::"AIJobStatus", "updatedAt" = $2, "lastError" = $3
-                    WHERE "id"::text = $4::text OR "externalJobId"::text = $5::text
-                    """,
-                    status, datetime.now(UTC), last_error, 
-                    str(job_id_uuid), str(job_id)
-                )
-        except Exception as exc:
-            logger.warning("Failed to update Job status in Postgres: %s", exc)
-
-    @staticmethod
-    def _ensure_uuid(val: str | None) -> UUID:
-        """
-        Returns a UUID object. If the input is not a valid UUID string,
-        generates a stable UUID v5 based on the input string.
-        """
-        if not val:
-            return uuid4()
-        try:
-            return UUID(val)
-        except (ValueError, TypeError):
-            # For human-readable IDs like 'job-xxxx', convert to stable UUID v5
-            import uuid
-            namespace = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8') # DNS namespace
-            return uuid.uuid5(namespace, val)
-
-    @staticmethod
-    def _parse_uuid(val: str | None) -> UUID | None:
-        if not val:
-            return None
-        try:
-            return UUID(val)
-        except (ValueError, TypeError):
-            return None
 
     @staticmethod
     def _queue_key(job_kind: JobKind) -> str:

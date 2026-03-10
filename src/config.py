@@ -154,11 +154,6 @@ class Settings(BaseModel):
     cors_allow_credentials: bool = False
     jwt_denylist_enabled: bool = True
     jwt_denylist_prefix: str = "auth:denylist:jti:"
-    db_host: str = ""
-    db_port: int = 5432
-    db_user: str = "postgres"
-    db_pass: str = ""
-    db_name: str = "postgres"
 
 
 def get_settings() -> Settings:
@@ -311,11 +306,6 @@ def get_settings() -> Settings:
             default=True,
         ),
         jwt_denylist_prefix=os.getenv("JWT_DENYLIST_PREFIX", "auth:denylist:jti:"),
-        db_host=os.getenv("DB_HOST", ""),
-        db_port=int(os.getenv("DB_PORT", "5432")),
-        db_user=os.getenv("DB_USER", "postgres"),
-        db_pass=os.getenv("DB_PASS", ""),
-        db_name=os.getenv("DB_NAME", "postgres"),
     )
 
 
