@@ -206,9 +206,9 @@ class MaterialJobStore:
                     ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10)
                     ON CONFLICT ("id") DO NOTHING
                     """,
-                    str(self._parse_uuid(job.job_id)),
-                    str(self._parse_uuid(job.material_id)),
-                    str(self._parse_uuid(job.requested_by_id)),
+                    self._ensure_uuid_str(job.job_id),
+                    self._ensure_uuid_str(job.material_id),
+                    self._ensure_uuid_str(job.requested_by_id),
                     job_type,
                     "accepted",
                     job.job_id,
@@ -225,6 +225,9 @@ class MaterialJobStore:
         if self._db_pool is None:
             return
 
+        # Ensure we have a valid UUID string for the 'id' column
+        uuid_str = self._ensure_uuid_str(job_id)
+
         try:
             async with self._db_pool.acquire() as conn:
                 await conn.execute(
@@ -234,10 +237,27 @@ class MaterialJobStore:
                     WHERE "id" = $4::uuid OR "externalJobId" = $5
                     """,
                     status, datetime.now(UTC), last_error, 
-                    str(self._parse_uuid(job_id)), job_id
+                    uuid_str, job_id
                 )
         except Exception as exc:
             logger.warning("Failed to update Job status in Postgres: %s", exc)
+
+    @staticmethod
+    def _ensure_uuid_str(val: str | None) -> str:
+        """
+        Ensures the return value is a string representation of a valid UUID.
+        If the input is not a valid UUID, generates a stable one based on the string.
+        """
+        if not val:
+            return str(uuid4())
+        try:
+            return str(UUID(val))
+        except (ValueError, TypeError):
+            # If job_id is 'job-xxxx', we can't cast to UUID. 
+            # We generate a stable UUID v5 for the database primary key.
+            import uuid
+            namespace = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8') # DNS namespace
+            return str(uuid.uuid5(namespace, val))
 
     @staticmethod
     def _parse_uuid(val: str | None) -> UUID | None:
@@ -246,9 +266,7 @@ class MaterialJobStore:
         try:
             return UUID(val)
         except (ValueError, TypeError):
-            # Fallback for non-UUID strings if they must be UUIDs in DB
-            # but we use them as string IDs in Redis
-            return uuid4()
+            return None
 
     @staticmethod
     def _queue_key(job_kind: JobKind) -> str:
