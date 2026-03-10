@@ -203,12 +203,12 @@ class MaterialJobStore:
                     INSERT INTO "AIJob" (
                         "id", "materialId", "requestedById", "type", "status",
                         "externalJobId", "createdAt", "updatedAt", "attempts", "parameters"
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10)
                     ON CONFLICT ("id") DO NOTHING
                     """,
-                    job.job_id,
-                    job.material_id,
-                    job.requested_by_id,
+                    str(self._parse_uuid(job.job_id)),
+                    str(self._parse_uuid(job.material_id)),
+                    str(self._parse_uuid(job.requested_by_id)),
                     job_type,
                     "accepted",
                     job.job_id,
@@ -231,10 +231,10 @@ class MaterialJobStore:
                     """
                     UPDATE "AIJob"
                     SET "status" = $1, "updatedAt" = $2, "lastError" = $3
-                    WHERE "id" = $4 OR "externalJobId" = $5
+                    WHERE "id" = $4::uuid OR "externalJobId" = $5
                     """,
                     status, datetime.now(UTC), last_error, 
-                    job_id, job_id
+                    str(self._parse_uuid(job_id)), job_id
                 )
         except Exception as exc:
             logger.warning("Failed to update Job status in Postgres: %s", exc)
