@@ -200,11 +200,11 @@ class AgentRuntime:
             missing_identifiers: list[str] = []
             if not job_id:
                 missing_identifiers.append("job_id")
-            if not material_id:
+            if not doc_id:
                 missing_identifiers.append("material_id")
             if not requested_by_id:
                 missing_identifiers.append("requested_by_id")
-
+ 
             if missing_identifiers:
                 warnings.append(
                     "mcp_insert_failed:missing_required_identifiers:"
@@ -213,7 +213,7 @@ class AgentRuntime:
             else:
                 mcp_tool_calls, mcp_warnings = await self._insert_material_payload_via_mcp(
                     job_id=job_id,
-                    material_id=material_id,
+                    material_id=doc_id,
                     requested_by_id=requested_by_id,
                     payload=payload_out,
                     requested_types=request.generate_types,

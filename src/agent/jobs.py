@@ -189,10 +189,11 @@ class MaterialJobStore:
                     elif t == "essay": job_type = "ESSAY"
                     elif t == "summary": job_type = "SUMMARY"
 
-            jid = self._parse_uuid(job.job_id)
-            mid = self._parse_uuid(job.material_id)
-            uid = self._parse_uuid(job.user_id)
-            rid = self._parse_uuid(job.requested_by_id)
+            # Parse UUIDs and convert to strings for asyncpg/Postgres varchar
+            jid = str(self._parse_uuid(job.job_id))
+            mid = str(self._parse_uuid(job.material_id))
+            uid = str(self._parse_uuid(job.user_id))
+            rid = str(self._parse_uuid(job.requested_by_id))
 
             params_json = json.dumps(job.request_payload)
 
