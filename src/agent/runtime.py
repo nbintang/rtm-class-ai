@@ -110,7 +110,7 @@ class AgentRuntime:
         )
         warnings.extend(extract_warnings)
 
-        document_id = self._rag_store.new_document_id()
+        document_id = material_id or self._rag_store.new_document_id()
         rag_context, rag_sources, rag_warnings = self._build_rag_context(
             user_id=request.user_id,
             document_id=document_id,
@@ -125,6 +125,14 @@ class AgentRuntime:
         if request.mcp_enabled and self._mcp_registry.has_config and not mcp_tools:
             warnings.append("MCP is enabled, but no MCP tools are currently available.")
 
+        # Pass the IDs to the prompt so the LLM knows what to call the MCP tools with.
+        ids_context = (
+            f"ID Informasi Penting:\n"
+            f"- job_id: {job_id or document_id}\n"
+            f"- user_id: {request.user_id}\n"
+            f"- material_id: {material_id or document_id}\n"
+        )
+
         # Keep generation deterministic and prevent provider-side tool argument failures:
         # generation step is JSON-only; MCP tools are invoked programmatically afterward.
         agent = self._get_agent(tools=[])
@@ -134,7 +142,7 @@ class AgentRuntime:
             mcq_count=request.mcq_count,
             essay_count=request.essay_count,
             summary_max_words=request.summary_max_words,
-            context="",
+            context=ids_context,
         )
 
         config = {
