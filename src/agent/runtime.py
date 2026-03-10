@@ -89,8 +89,8 @@ class AgentRuntime:
         file_bytes: bytes,
         filename: str,
         content_type: str | None,
+        document_id: str | None = None,
         job_id: str | None = None,
-        material_id: str | None = None,
         requested_by_id: str | None = None,
     ) -> MaterialGenerateResponse:
         await self.initialize()
@@ -110,10 +110,10 @@ class AgentRuntime:
         )
         warnings.extend(extract_warnings)
 
-        document_id = material_id or self._rag_store.new_document_id()
+        doc_id = document_id or self._rag_store.new_document_id()
         rag_context, rag_sources, rag_warnings = self._build_rag_context(
             user_id=request.user_id,
-            document_id=document_id,
+            document_id=doc_id,
             filename=filename,
             file_type=file_type,
             extracted_text=extracted_text,
@@ -124,13 +124,16 @@ class AgentRuntime:
         mcp_tools = await self._mcp_registry.load_tools()
         if request.mcp_enabled and self._mcp_registry.has_config and not mcp_tools:
             warnings.append("MCP is enabled, but no MCP tools are currently available.")
-
+ 
+        # Use the actual Job ID for the prompt, fallback to doc_id if not provided
+        actual_job_id = job_id or doc_id
+ 
         # Pass the IDs to the prompt so the LLM knows what to call the MCP tools with.
         ids_context = (
             f"ID Informasi Penting:\n"
-            f"- job_id: {job_id or document_id}\n"
+            f"- job_id: {actual_job_id}\n"
             f"- user_id: {request.user_id}\n"
-            f"- material_id: {material_id or document_id}\n"
+            f"- material_id: {doc_id}\n"
         )
 
         # Keep generation deterministic and prevent provider-side tool argument failures:
