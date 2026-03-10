@@ -184,6 +184,10 @@ class MaterialJobStore:
             return
 
         try:
+            job_id_uuid = self._ensure_uuid(job.job_id)
+            material_id_uuid = self._ensure_uuid(job.material_id)
+            requested_by_id_uuid = self._ensure_uuid(job.requested_by_id)
+
             job_type = "MCQ"
             if job.job_kind == "lkpd":
                 job_type = "LKPD"
@@ -196,6 +200,7 @@ class MaterialJobStore:
                     elif t == "summary": job_type = "SUMMARY"
 
             params_json = json.dumps(job.request_payload)
+            now = datetime.now(UTC)
 
             async with self._db_pool.acquire() as conn:
                 await conn.execute(
@@ -206,13 +211,13 @@ class MaterialJobStore:
                     ) VALUES (
                         $1::uuid, $2::uuid, $3::uuid, 
                         $4::"AIJobType", $5::"AIJobStatus", 
-                        $6, $7, $8, $9, $10
+                        $6::text, $7, $8, $9, $10
                     )
                     ON CONFLICT ("id") DO NOTHING
                     """,
-                    self._ensure_uuid_str(job.job_id),
-                    self._ensure_uuid_str(job.material_id),
-                    self._ensure_uuid_str(job.requested_by_id),
+                    job_id_uuid,
+                    material_id_uuid,
+                    requested_by_id_uuid,
                     job_type,
                     "accepted",
                     job.job_id,
@@ -229,39 +234,36 @@ class MaterialJobStore:
         if self._db_pool is None:
             return
 
-        # Ensure we have a valid UUID string for the 'id' column
-        uuid_str = self._ensure_uuid_str(job_id)
-
         try:
+            job_id_uuid = self._ensure_uuid(job_id)
             async with self._db_pool.acquire() as conn:
                 await conn.execute(
                     """
                     UPDATE "AIJob"
                     SET "status" = $1::"AIJobStatus", "updatedAt" = $2, "lastError" = $3
-                    WHERE "id"::text = $4 OR "externalJobId" = $5
+                    WHERE "id"::text = $4::text OR "externalJobId"::text = $5::text
                     """,
                     status, datetime.now(UTC), last_error, 
-                    uuid_str, job_id
+                    str(job_id_uuid), str(job_id)
                 )
         except Exception as exc:
             logger.warning("Failed to update Job status in Postgres: %s", exc)
 
     @staticmethod
-    def _ensure_uuid_str(val: str | None) -> str:
+    def _ensure_uuid(val: str | None) -> UUID:
         """
-        Ensures the return value is a string representation of a valid UUID.
-        If the input is not a valid UUID, generates a stable one based on the string.
+        Returns a UUID object. If the input is not a valid UUID string,
+        generates a stable UUID v5 based on the input string.
         """
         if not val:
-            return str(uuid4())
+            return uuid4()
         try:
-            return str(UUID(val))
+            return UUID(val)
         except (ValueError, TypeError):
-            # If job_id is 'job-xxxx', we can't cast to UUID. 
-            # We generate a stable UUID v5 for the database primary key.
+            # For human-readable IDs like 'job-xxxx', convert to stable UUID v5
             import uuid
             namespace = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8') # DNS namespace
-            return str(uuid.uuid5(namespace, val))
+            return uuid.uuid5(namespace, val)
 
     @staticmethod
     def _parse_uuid(val: str | None) -> UUID | None:
