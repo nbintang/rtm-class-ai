@@ -41,7 +41,7 @@ async def process_material_job(
             filename=job.filename,
             content_type=job.content_type,
             job_id=job.job_id,
-            material_id=job.material_id,
+            document_id=job.material_id,
             requested_by_id=job.requested_by_id,
         )
         callback_payload = MaterialWebhookResultPayload(
@@ -96,6 +96,8 @@ async def process_lkpd_job(
             file_bytes=job_store.decode_file_bytes(job),
             filename=job.filename,
             content_type=job.content_type,
+            job_id=job.job_id,
+            document_id=job.material_id,
         )
         pdf_bytes = render_lkpd_pdf(
             lkpd=runtime_result.lkpd,
