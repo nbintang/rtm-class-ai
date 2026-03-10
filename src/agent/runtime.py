@@ -111,7 +111,7 @@ class AgentRuntime:
         )
         warnings.extend(extract_warnings)
  
-        doc_id = document_id or self._rag_store.new_document_id()
+        doc_id = document_id or material_id or self._rag_store.new_document_id()
         rag_context, rag_sources, rag_warnings = self._build_rag_context(
             user_id=request.user_id,
             document_id=doc_id,
@@ -128,9 +128,9 @@ class AgentRuntime:
         # Pass the IDs to the prompt so the LLM knows what to call the MCP tools with.
         ids_context = (
             f"ID Informasi Penting:\n"
-            f"- job_id: {doc_id}\n"
+            f"- job_id: {job_id or doc_id}\n"
             f"- user_id: {request.user_id}\n"
-            f"- material_id: {doc_id}\n"
+            f"- material_id: {material_id or doc_id}\n"
         )
 
         # Keep generation deterministic and prevent provider-side tool argument failures:
