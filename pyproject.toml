@@ -15,6 +15,7 @@ dependencies = [
   "redis>=5",
   "langchain",
   "langgraph",
+  "asyncpg",
   "langchain-groq",
   "langchain-mcp-adapters",
   "chromadb",
