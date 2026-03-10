@@ -131,6 +131,11 @@ class Settings(BaseModel):
     lkpd_header_title_line1: str = "LEMBAR KERJA PESERTA DIDIK (LKPD)"
     lkpd_header_title_line2: str = "SMARTER AI"
     lkpd_header_title_line3: str = ""
+    db_host: str = "localhost"
+    db_port: int = 5432
+    db_user: str = "postgres"
+    db_pass: str = ""
+    db_name: str = "rtm_db"
     app_public_base_url: str = "http://localhost:8000"
     jwt_enabled: bool = True
     jwt_secret: str = ""
@@ -268,6 +273,11 @@ def get_settings() -> Settings:
             "SMARTER AI",
         ),
         lkpd_header_title_line3=os.getenv("LKPD_HEADER_TITLE_LINE3", ""),
+        db_host=os.getenv("DB_HOST", "localhost"),
+        db_port=int(os.getenv("DB_PORT", "5432")),
+        db_user=os.getenv("DB_USER", "postgres"),
+        db_pass=os.getenv("DB_PASS", ""),
+        db_name=os.getenv("DB_NAME", "rtm_db"),
         app_public_base_url=os.getenv("APP_PUBLIC_BASE_URL", "http://localhost:8000"),
         jwt_enabled=jwt_enabled,
         jwt_secret=jwt_secret,

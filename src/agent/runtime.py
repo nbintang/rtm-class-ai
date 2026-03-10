@@ -92,6 +92,7 @@ class AgentRuntime:
         job_id: str | None = None,
         material_id: str | None = None,
         requested_by_id: str | None = None,
+        document_id: str | None = None,
     ) -> MaterialGenerateResponse:
         await self.initialize()
 
@@ -102,28 +103,35 @@ class AgentRuntime:
             )
 
         warnings: list[str] = list(self._startup_warnings)
-
+ 
         extracted_text, file_type, extract_warnings = extract_material_text(
             filename=filename,
             content_type=content_type,
             payload=file_bytes,
         )
         warnings.extend(extract_warnings)
-
-        document_id = self._rag_store.new_document_id()
+ 
+        doc_id = document_id or self._rag_store.new_document_id()
         rag_context, rag_sources, rag_warnings = self._build_rag_context(
             user_id=request.user_id,
-            document_id=document_id,
+            document_id=doc_id,
             filename=filename,
             file_type=file_type,
             extracted_text=extracted_text,
             generate_types=request.generate_types,
         )
         warnings.extend(rag_warnings)
-
         mcp_tools = await self._mcp_registry.load_tools()
         if request.mcp_enabled and self._mcp_registry.has_config and not mcp_tools:
             warnings.append("MCP is enabled, but no MCP tools are currently available.")
+ 
+        # Pass the IDs to the prompt so the LLM knows what to call the MCP tools with.
+        ids_context = (
+            f"ID Informasi Penting:\n"
+            f"- job_id: {doc_id}\n"
+            f"- user_id: {request.user_id}\n"
+            f"- material_id: {doc_id}\n"
+        )
 
         # Keep generation deterministic and prevent provider-side tool argument failures:
         # generation step is JSON-only; MCP tools are invoked programmatically afterward.
@@ -134,7 +142,7 @@ class AgentRuntime:
             mcq_count=request.mcq_count,
             essay_count=request.essay_count,
             summary_max_words=request.summary_max_words,
-            context="",
+            context=ids_context,
         )
 
         config = {
@@ -216,12 +224,12 @@ class AgentRuntime:
                 fact=payload_out.summary.overview,
                 memory_type="material_summary",
                 source="uploaded_material",
-                extra_metadata={"filename": filename, "document_id": document_id},
+                extra_metadata={"filename": filename, "document_id": doc_id},
             )
-
+ 
         return MaterialGenerateResponse(
             user_id=request.user_id,
-            document_id=document_id,
+            document_id=doc_id,
             material=MaterialInfo(
                 filename=filename,
                 file_type=file_type,
@@ -242,6 +250,7 @@ class AgentRuntime:
         file_bytes: bytes,
         filename: str,
         content_type: str | None,
+        document_id: str | None = None,
     ) -> LkpdGenerateRuntimeResult:
         await self.initialize()
 
@@ -258,11 +267,11 @@ class AgentRuntime:
             payload=file_bytes,
         )
         warnings.extend(extract_warnings)
-
-        document_id = self._rag_store.new_document_id()
+ 
+        doc_id = document_id or self._rag_store.new_document_id()
         rag_context, rag_sources, rag_warnings = self._build_lkpd_rag_context(
             user_id=request.user_id,
-            document_id=document_id,
+            document_id=doc_id,
             filename=filename,
             file_type=file_type,
             extracted_text=extracted_text,
@@ -310,7 +319,7 @@ class AgentRuntime:
         )
 
         return LkpdGenerateRuntimeResult(
-            document_id=document_id,
+            document_id=doc_id,
             material=MaterialInfo(
                 filename=filename,
                 file_type=file_type,

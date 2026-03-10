@@ -22,6 +22,7 @@ dependencies = [
   "pypdf",
   "python-pptx",
   "reportlab",
+  "asyncpg",
   "taskipy>=1.14.1",
 ]
 

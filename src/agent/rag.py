@@ -280,7 +280,7 @@ class MaterialRAGStore:
         }
 
     def new_document_id(self) -> str:
-        return f"doc-{uuid4().hex}"
+        return str(uuid4())
 
     @staticmethod
     def _dedupe_docs(docs: list[Document]) -> list[Document]:
